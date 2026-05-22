@@ -1,0 +1,43 @@
+# ── Python ───────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+dist/
+build/
+
+# ── Virtual Environment ───────────────────────────────────────
+venv/
+.venv/
+env/
+
+# ── Secrets ───────────────────────────────────────────────────
+.env
+.env.local
+.env.production
+*.key
+
+# ── Database & Live State ─────────────────────────────────────
+dashboard/bot_state.db
+live/state/
+
+# ── Cache & Data ──────────────────────────────────────────────
+data/cache/
+*.parquet
+*.csv
+backtest_results/
+logs/
+uzun_donem_testler/*.txt
+
+# ── IDE & OS ──────────────────────────────────────────────────
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# ── Pytest ────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+bist/*.txt
+bist/*.log

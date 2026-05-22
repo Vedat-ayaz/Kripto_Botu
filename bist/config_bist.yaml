@@ -1,0 +1,312 @@
+data:
+  provider: yfinance
+  interval: 1d
+  usd_mode: convert_series
+  cache_enabled: true
+trading:
+  symbols:
+  - GARAN
+  - AKBNK
+  - ISCTR
+  - YKBNK
+  - HALKB
+  - VAKBN
+  - QNBFB
+  - TSKB
+  - ALBRK
+  - ODEAB
+  - KCHOL
+  - SAHOL
+  - DOHOL
+  - AGHOL
+  - KOZAL
+  - ISFIN
+  - EREGL
+  - TUPRS
+  - PETKM
+  - AYGAZ
+  - GUBRF
+  - TRKCM
+  - AKCNS
+  - HEKTS
+  - FROTO
+  - TOASO
+  - TTRAK
+  - KARSAN
+  - DOAS
+  - MAVI
+  - THYAO
+  - PGSUS
+  - TAVHL
+  - CLEBI
+  - UCAK
+  - BIMAS
+  - MGROS
+  - ULKER
+  - CCOLA
+  - AEFES
+  - TATGD
+  - SOKM
+  - BRYAT
+  - TCELL
+  - TTKOM
+  - LOGO
+  - LINK
+  - DESPC
+  - NETAS
+  - ASELS
+  - ROKET
+  - KFEIN
+  - ENKAI
+  - EKGYO
+  - ISGYO
+  - TOKER
+  - KREAS
+  - YKGYO
+  - SISE
+  - CIMSA
+  - BFREN
+  - SELVA
+  - ZOREN
+  - ARCLK
+  - VESTL
+  - GENTS
+  - SERVE
+  - KRDMD
+  - GLYHO
+  - IPEKE
+  - SNPAM
+  - INDES
+  - AKGRT
+  - RAYSG
+  - ANHYT
+  - AVHOL
+  - KCAER
+  - SRVGY
+  - ODAS
+  - AKSEN
+  - SASA
+  - BRISA
+  - KARSN
+  - PRKME
+  - SKBNK
+  - OTKAR
+  - TCMB
+  - NTHOL
+  - BERA
+  - PEGYO
+  - CANTE
+  - METRO
+  - TURSG
+  - ESEN
+  - ASUZU
+  - PARSN
+  - VKGYO
+  - BANVT
+  - TEKTU
+  - AKENR
+  universe_size: '100'
+  use_universe: '100'
+  timeframe: 1d
+strategy:
+  ema_fast: 50
+  ema_slow: 200
+  rsi_period: 14
+  rsi_lower: 45
+  rsi_upper: 70
+  atr_period: 14
+  adx_period: 14
+  adx_threshold: 22
+  volume_sma_period: 20
+  volume_sma_multiplier: 0.8
+  min_atr_ratio: 0.005
+  entry_score_trend: 0.47
+  entry_score_ranging: 0.57
+  # Bear dönemde RS pozitif hisseler için daha düşük eşik
+  adaptive_threshold_bear: 0.52   # Bear dönem + RS pozitif → bu eşik kullanılır
+  adx_boost: 0.0
+  regime_trending_threshold: 0.45
+  regime_ranging_threshold: 0.35
+  slope_bars: 5              # EMA50 son 5 günde yükselmeli
+risk:
+  risk_per_trade: 0.01
+  daily_max_loss: 0.03
+  atr_stop_multiplier: 3.0
+  trailing_stop_atr_multiplier: 3.0
+  max_open_positions: 4
+  min_order_size: 10.0
+  max_position_pct: 0.15
+  monthly_loss_limit: 0.04   # Aylık %4 kayıp → o ay yeni giriş yok
+pyramiding:
+  enabled: true
+  thresholds_atr:
+  - 1.5
+  - 3.0
+  size_pcts:
+  - 0.5
+  - 0.25
+  max_adds: 2
+  stop_atr_multiplier: 2.0
+  gate:
+    min_regime_score: 0.5
+    max_vol_spike: 1.5
+    max_atr_ratio: 0.06
+    min_adx: 20.0
+filters:
+  choppiness_enabled: true
+  choppiness_threshold: 61.8
+  mtf_filter_enabled: false
+partial_exits:
+  enabled: false
+  r_multiple_levels:
+  - 1.5
+  - 3.0
+  exit_pcts:
+  - 0.35
+  - 0.3
+  max_exits: 2
+backtest:
+  initial_capital: 10000.0
+  start_date: '2020-01-01'
+  end_date: '2026-01-01'
+  commission_rate: 0.0005
+  slippage_rate: 0.001
+macro:
+  regime_filter_enabled: true
+  regime_source: XU100
+  regime_ema_period: 100
+  regime_usd_adjusted: true
+  usdtry_guard_enabled: true
+  usdtry_momentum_period: 20
+  usdtry_crisis_threshold: 0.15
+sector_correlation:
+  max_positions_per_cluster: 2
+  clusters:
+    banks:
+    - GARAN
+    - AKBNK
+    - ISCTR
+    - YKBNK
+    - HALKB
+    holding:
+    - KCHOL
+    - SAHOL
+    petrochem:
+    - TUPRS
+    - PETKM
+    auto:
+    - FROTO
+    - TOASO
+    aviation:
+    - THYAO
+    - PGSUS
+    retail:
+    - BIMAS
+    - MGROS
+symbol_profiles:
+  THYAO:
+    trailing_stop_atr_multiplier: 4.5
+    adx_threshold: 15
+  PGSUS:
+    trailing_stop_atr_multiplier: 4.5
+    adx_threshold: 15
+  GARAN:
+    risk_per_trade: 0.004
+    max_position_pct: 0.08
+    entry_score_ranging: 0.68
+    entry_score_trend: 0.6
+    adx_threshold: 28
+    trailing_stop_atr_multiplier: 2.5
+    slope_bars: 10
+    momentum_lookback: 60
+  AKBNK:
+    risk_per_trade: 0.005
+    max_position_pct: 0.1
+    entry_score_ranging: 0.68
+    entry_score_trend: 0.55
+    adx_threshold: 28
+    trailing_stop_atr_multiplier: 2.5
+  ISCTR:
+    risk_per_trade: 0.004
+    max_position_pct: 0.08
+    entry_score_ranging: 0.68
+    entry_score_trend: 0.58
+    adx_threshold: 28
+    trailing_stop_atr_multiplier: 2.5
+  YKBNK:
+    risk_per_trade: 0.003
+    max_position_pct: 0.1
+    entry_score_ranging: 0.65
+    adx_threshold: 25
+    trailing_stop_atr_multiplier: 2.5
+  ASELS:
+    trailing_stop_atr_multiplier: 5.0
+    atr_stop_multiplier: 2.5
+    risk_per_trade: 0.008
+    entry_score_ranging: 0.55
+  EREGL:
+    adx_threshold: 16
+    trailing_stop_atr_multiplier: 4.5
+  TUPRS:
+    min_atr_ratio: 0.008
+  PETKM:
+    risk_per_trade: 0.004
+    entry_score_ranging: 0.6
+    entry_score_trend: 0.55
+    adx_threshold: 24
+    trailing_stop_atr_multiplier: 2.5
+  TOASO:
+    entry_score_ranging: 0.57
+    adx_threshold: 22
+  KCHOL:
+    risk_per_trade: 0.006
+    entry_score_ranging: 0.58
+    adx_threshold: 22
+    trailing_stop_atr_multiplier: 3.0
+  GLYHO:
+    risk_per_trade: 0.004
+    entry_score_ranging: 0.65
+    entry_score_trend: 0.58
+    adx_threshold: 28
+    atr_stop_multiplier: 1.5
+    trailing_stop_atr_multiplier: 2.5
+    max_position_pct: 0.08
+  ALBRK:
+    risk_per_trade: 0.003
+    entry_score_ranging: 0.66
+    entry_score_trend: 0.58
+    adx_threshold: 26
+    trailing_stop_atr_multiplier: 2.0
+    max_position_pct: 0.08
+  HALKB:
+    risk_per_trade: 0.004
+    entry_score_ranging: 0.64
+    entry_score_trend: 0.57
+    adx_threshold: 25
+    trailing_stop_atr_multiplier: 2.5
+    max_position_pct: 0.08
+  DESPC:
+    risk_per_trade: 0.003
+    entry_score_ranging: 0.65
+    adx_threshold: 26
+    max_position_pct: 0.08
+  VAKBN:
+    risk_per_trade: 0.004
+    entry_score_ranging: 0.63
+    adx_threshold: 24
+    trailing_stop_atr_multiplier: 2.5
+  LOGO:
+    risk_per_trade: 0.006
+    entry_score_ranging: 0.60
+    adx_threshold: 22
+    trailing_stop_atr_multiplier: 3.0
+  SKBNK:
+    risk_per_trade: 0.005
+    entry_score_ranging: 0.62
+    adx_threshold: 24
+    atr_stop_multiplier: 1.5
+    trailing_stop_atr_multiplier: 2.5
+telegram:
+  enabled: false
+  token: ''
+  chat_id: ''

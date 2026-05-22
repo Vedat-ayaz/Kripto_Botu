@@ -1,0 +1,193 @@
+data:
+  provider: yfinance
+  interval: 1d
+  usd_mode: convert_series
+  cache_enabled: true
+trading:
+  symbols:
+  - AKBNK
+  - ISCTR
+  - YKBNK
+  - HALKB
+  - VAKBN
+  - KCHOL
+  - SAHOL
+  - DOHOL
+  - EREGL
+  - TUPRS
+  - PETKM
+  - FROTO
+  - TOASO
+  - THYAO
+  - PGSUS
+  - BIMAS
+  - MGROS
+  - ULKER
+  - TCELL
+  - TTKOM
+  - ASELS
+  - ENKAI
+  - SISE
+  - KRDMD
+  - ARCLK
+  - VESTL
+  - EKGYO
+  - TAVHL
+  - KOZAL
+  universe_size: '30'
+  timeframe: 1d
+strategy:
+  ema_fast: 50
+  ema_slow: 200
+  rsi_period: 14
+  rsi_lower: 45
+  rsi_upper: 70
+  atr_period: 14
+  adx_period: 14
+  adx_threshold: 18
+  volume_sma_period: 20
+  volume_sma_multiplier: 0.4
+  min_atr_ratio: 0.005
+  entry_score_trend: 0.53
+  entry_score_ranging: 0.57
+  adx_boost: 0.0
+  regime_trending_threshold: 0.45
+  regime_ranging_threshold: 0.35
+risk:
+  risk_per_trade: 0.012
+  daily_max_loss: 0.03
+  atr_stop_multiplier: 3.0
+  trailing_stop_atr_multiplier: 3.0
+  max_open_positions: 4
+  min_order_size: 10.0
+  max_position_pct: 0.15
+pyramiding:
+  enabled: true
+  thresholds_atr:
+  - 1.5
+  - 3.0
+  size_pcts:
+  - 0.5
+  - 0.25
+  max_adds: 2
+  stop_atr_multiplier: 2.0
+  gate:
+    min_regime_score: 0.5
+    max_vol_spike: 1.5
+    max_atr_ratio: 0.06
+    min_adx: 20.0
+filters:
+  choppiness_enabled: true
+  choppiness_threshold: 61.8
+  mtf_filter_enabled: false
+partial_exits:
+  enabled: false
+  r_multiple_levels:
+  - 1.5
+  - 3.0
+  exit_pcts:
+  - 0.35
+  - 0.3
+  max_exits: 2
+backtest:
+  initial_capital: 10000.0
+  start_date: '2020-01-01'
+  end_date: '2026-01-01'
+  commission_rate: 0.0005
+  slippage_rate: 0.001
+macro:
+  regime_filter_enabled: true
+  regime_source: XU100
+  regime_ema_period: 200
+  regime_usd_adjusted: true
+  usdtry_guard_enabled: true
+  usdtry_momentum_period: 20
+  usdtry_crisis_threshold: 0.15
+sector_correlation:
+  max_positions_per_cluster: 2
+  clusters:
+    banks:
+    - GARAN
+    - AKBNK
+    - ISCTR
+    - YKBNK
+    - HALKB
+    holding:
+    - KCHOL
+    - SAHOL
+    petrochem:
+    - TUPRS
+    - PETKM
+    auto:
+    - FROTO
+    - TOASO
+    aviation:
+    - THYAO
+    - PGSUS
+    retail:
+    - BIMAS
+    - MGROS
+symbol_profiles:
+  THYAO:
+    trailing_stop_atr_multiplier: 4.5
+    adx_threshold: 15
+  PGSUS:
+    trailing_stop_atr_multiplier: 4.5
+    adx_threshold: 15
+  GARAN:
+    risk_per_trade: 0.004
+    max_position_pct: 0.08
+    entry_score_ranging: 0.68
+    entry_score_trend: 0.6
+    adx_threshold: 28
+    trailing_stop_atr_multiplier: 2.5
+    slope_bars: 10
+    momentum_lookback: 60
+  AKBNK:
+    risk_per_trade: 0.005
+    max_position_pct: 0.1
+    entry_score_ranging: 0.68
+    entry_score_trend: 0.55
+    adx_threshold: 28
+    trailing_stop_atr_multiplier: 2.5
+  ISCTR:
+    risk_per_trade: 0.004
+    max_position_pct: 0.08
+    entry_score_ranging: 0.68
+    entry_score_trend: 0.58
+    adx_threshold: 28
+    trailing_stop_atr_multiplier: 2.5
+  YKBNK:
+    risk_per_trade: 0.003
+    max_position_pct: 0.1
+    entry_score_ranging: 0.65
+    adx_threshold: 25
+    trailing_stop_atr_multiplier: 2.5
+  ASELS:
+    trailing_stop_atr_multiplier: 5.0
+    atr_stop_multiplier: 2.5
+    risk_per_trade: 0.008
+    entry_score_ranging: 0.55
+  EREGL:
+    adx_threshold: 16
+    trailing_stop_atr_multiplier: 4.5
+  TUPRS:
+    min_atr_ratio: 0.008
+  PETKM:
+    risk_per_trade: 0.004
+    entry_score_ranging: 0.6
+    entry_score_trend: 0.55
+    adx_threshold: 24
+    trailing_stop_atr_multiplier: 2.5
+  TOASO:
+    entry_score_ranging: 0.57
+    adx_threshold: 22
+  KCHOL:
+    risk_per_trade: 0.006
+    entry_score_ranging: 0.58
+    adx_threshold: 22
+    trailing_stop_atr_multiplier: 3.0
+telegram:
+  enabled: false
+  token: ''
+  chat_id: ''

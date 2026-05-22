@@ -1,0 +1,14 @@
+ccxt>=4.3.0
+pandas>=2.0.0
+numpy>=1.26.0
+pyyaml>=6.0
+python-dotenv>=1.0
+requests>=2.31.0
+python-telegram-bot>=21.0
+pytest>=8.0
+pytest-asyncio>=0.23
+streamlit>=1.35.0
+plotly>=5.22.0
+# ── BIST modülü ──────────────────────────────────────────────────────────────
+yfinance>=0.2.40
+pyarrow>=14.0.0    # parquet cache için
