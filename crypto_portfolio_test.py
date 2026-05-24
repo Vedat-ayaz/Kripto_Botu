@@ -149,7 +149,7 @@ BASELINE = dict(
     volume_sma_multiplier=0.4,
     entry_score_trend=0.55,
     entry_score_ranging=0.60,
-    choppiness_threshold=61.8,
+    choppiness_threshold=55.0,  # v9: 61.8 → 55.0 (sahte breakout sinyallerini eler, WR yükseltir)
     choppiness_enabled=True,
     mtf_filter_enabled=False,
     slope_bars=20,
@@ -1103,8 +1103,10 @@ def run_portfolio_backtest(
                 #     3 birim, daha büyük lot, %18 nakit cap → büyük trende para döker
                 # M4v14: not use_universe → _btc_m1_active (dinamik BTC bull tespiti)
                 _pyr_base = pos.is_coin_bull and not pos.is_short and atr > 0
+                # M6 v9: Pyramid SADECE BTC-bull rejiminde (önceden BEAR'de de pyramid yapıyordu,
+                # bear bounce'larda compound kayıp veriyordu)
                 _pyr_m6 = (_pyr_base and m6_mode and pos.pyramid_count < 4
-                           and _adx_for_pyramid >= 24)
+                           and _adx_for_pyramid >= 24 and _btc_m1_active)
                 _pyr_m4 = (_pyr_base and not m6_mode and pos.pyramid_count < 2
                            and m4_mode and _btc_m1_active and _adx_for_pyramid >= 28)
                 if _pyr_m6 or _pyr_m4:
@@ -1431,12 +1433,25 @@ def run_portfolio_backtest(
                         if not (last3["close"] > last3[ema_col]).all():
                             continue
 
-                    # LONG-specific: 14-günlük momentum (global bear + coin düşüşteyse)
-                    if in_global_bear and not coin_own_bull:
-                        bars_14d = 14 * 24
-                        if len(slice_df) > bars_14d:
-                            price_14d_ago = float(slice_df.iloc[-bars_14d]["close"])
-                            if (price / price_14d_ago) - 1 < -0.05:
+                    # LONG-specific (v9): BEAR rejimde SADECE çok güçlü trend coinlerinde gir.
+                    # 4 katmanlı sıkı filtre — bunlardan herhangi biri fail ederse continue:
+                    #   1) coin_own_bull (EMA200 üstü) → temel
+                    #   2) ADX ≥ 28 → güçlü trend (yataylarda gir-me)
+                    #   3) son 14 gün momentum ≥ %3 → coin gerçekten yükselişte
+                    #   4) choppiness < 50 → range market değil
+                    if in_global_bear:
+                        if not coin_own_bull:
+                            continue
+                        _bear_adx = float(row.get("adx", 0.0))
+                        if _bear_adx < 28:
+                            continue
+                        _bear_chop = float(row.get("choppiness", 100.0))
+                        if _bear_chop > 50:
+                            continue
+                        _bars_14d = 14 * 24
+                        if len(slice_df) > _bars_14d:
+                            _p14 = float(slice_df.iloc[-_bars_14d]["close"])
+                            if _p14 > 0 and (price / _p14 - 1.0) < 0.03:
                                 continue
 
                 else:
@@ -1537,12 +1552,13 @@ def run_portfolio_backtest(
                     combined_mult *= 0.65
                 risk_pct_adj = risk_pct * combined_mult
                 if _is_high_conf_bull:
-                    # M6 v8: BTC bull onayında SÜPER agresif (×2.6/×3.0), yoksa standart ×2.0
+                    # M6 v9: BTC bull onayında SÜPER (×2.6/×3.0), bear/nötr → DEFANSİF (×1.0)
+                    # Önceki ×2.0 BEAR'de tek SL'de %1.5+ kayıp veriyordu (DD %36).
                     if m6_mode:
                         if _btc_m1_active:
                             _m6_boost = 3.0 if _adx_now >= 35 else 2.6
                         else:
-                            _m6_boost = 2.0   # bear/nötr — risk al ama aşırıya kaçma
+                            _m6_boost = 1.0   # bear/nötr → normal risk (defansif)
                         risk_pct_adj = min(risk_pct_adj * _m6_boost, risk_pct * 5.0)
                     else:
                         risk_pct_adj = min(risk_pct_adj * 1.5, risk_pct * 3.0)
@@ -1560,15 +1576,21 @@ def run_portfolio_backtest(
                 # Max position cap (per-coin override mümkün)
                 # M4v11: Yüksek güven → max_pos_pct de artır (capleme durumunu da kapsar)
                 _max_pos_pct = coin_risk[sym].get("max_position_pct", MAX_POSITION_PCT)
+                # v9: BEAR rejimde TÜM modellerde pos boyutu yarıya
+                # (M4/M5 default %6-8 pos × 60-80 trade × WR %25 = %8-10 zarar veriyordu)
+                if in_global_bear:
+                    _max_pos_pct *= 0.5
+                    risk_pct_adj *= 0.5
                 if _is_high_conf_bull:
                     if m6_mode:
-                        # M6 v8: BTC bull onayında SÜPER (×3.0, cap %60), yoksa v3 (×2.0, cap %45)
+                        # M6 v9: BTC bull onayında SÜPER (×3.0, cap %60), bear/nötr → DEFANSİF (×1.0, cap %20)
+                        # Önceki %45 cap BEAR'de tek trade'de sermayenin yarısını riske atıyordu.
                         if _btc_m1_active:
                             _m6_mult = 3.0
                             _m6_max_cap = 0.60 if _adx_now >= 35 else 0.50
                         else:
-                            _m6_mult = 2.0
-                            _m6_max_cap = 0.45
+                            _m6_mult = 1.0       # normal mod (boost yok)
+                            _m6_max_cap = 0.20   # max %20 (önceden %45 → DD %36)
                         _max_pos_pct = min(_max_pos_pct * _m6_mult, _m6_max_cap)
                     else:
                         _max_pos_pct = min(_max_pos_pct * 1.5, 0.35)   # 20% → 30% (max 35%)
