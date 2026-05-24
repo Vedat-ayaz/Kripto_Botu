@@ -1117,14 +1117,26 @@ def render_top_metrics(
     m5: dict[str, Any],
     m6: dict[str, Any],
 ) -> None:
-    status = snapshot.get("status") or {}
     open_positions = snapshot.get("open_positions") or []
     closed = snapshot.get("closed") or []
     stats = snapshot.get("stats") or {}
-
-    live_balance = safe_float(status.get("account_balance"), safe_float(m4.get("final_balance"), 10_000.0))
-    total_pnl = safe_float(status.get("total_pnl"), safe_float(m4.get("total_pnl")))
     trade_count = safe_int(stats.get("total"), len(closed))
+
+    # Her bot ayrı sermaye ile başlar; final_balance state JSON'unda saklanıyor
+    m4_balance = safe_float(m4.get("final_balance"), safe_float(m4.get("initial_capital"), 1000.0))
+    m5_balance = safe_float(m5.get("final_balance"), safe_float(m5.get("initial_capital"), 1000.0))
+    m6_balance = safe_float(m6.get("final_balance"), safe_float(m6.get("initial_capital"), 1000.0))
+    m4_return = safe_float(m4.get("return_pct"))
+    m5_return = safe_float(m5.get("return_pct"))
+    m6_return = safe_float(m6.get("return_pct"))
+    total_balance = m4_balance + m5_balance + m6_balance
+    total_initial = (
+        safe_float(m4.get("initial_capital"), 1000.0)
+        + safe_float(m5.get("initial_capital"), 1000.0)
+        + safe_float(m6.get("initial_capital"), 1000.0)
+    )
+    total_pnl = total_balance - total_initial
+
     # 3 model arasından en yüksek total_pnl'i seç
     _candidates = [("M4", m4), ("M5", m5), ("M6", m6)]
     best_name, best_dict = max(_candidates, key=lambda x: safe_float(x[1].get("total_pnl")))
@@ -1132,13 +1144,13 @@ def render_top_metrics(
     best_model_return = safe_float(best_dict.get("return_pct"))
 
     cols = st.columns(7)
-    cols[0].metric("Aktif Bakiye", format_money(live_balance), format_money(total_pnl), delta_color=style_metric_delta(total_pnl))
-    cols[1].metric("Acik Pozisyon", str(len(open_positions)), f"{trade_count} kapali islem")
-    cols[2].metric("Piyasa Nefesi", format_pct(breadth["avg_change"]), f"{breadth['gainers']} / {breadth['losers']}", delta_color=style_metric_delta(breadth["avg_change"]))
-    cols[3].metric("M4 Getiri", format_pct(safe_float(m4.get("return_pct"))), f"DD {safe_float(m4.get('drawdown_pct')):.1f}%", delta_color=style_metric_delta(safe_float(m4.get("return_pct"))))
-    cols[4].metric("M5 Getiri", format_pct(safe_float(m5.get("return_pct"))), f"DD {safe_float(m5.get('drawdown_pct')):.1f}%", delta_color=style_metric_delta(safe_float(m5.get("return_pct"))))
-    cols[5].metric("M6 Getiri", format_pct(safe_float(m6.get("return_pct"))), f"DD {safe_float(m6.get('drawdown_pct')):.1f}%", delta_color=style_metric_delta(safe_float(m6.get("return_pct"))))
-    cols[6].metric("Onde Model", best_model, format_pct(best_model_return), delta_color=style_metric_delta(best_model_return))
+    cols[0].metric("M4 Bakiye", format_money(m4_balance), format_pct(m4_return), delta_color=style_metric_delta(m4_return))
+    cols[1].metric("M5 Bakiye", format_money(m5_balance), format_pct(m5_return), delta_color=style_metric_delta(m5_return))
+    cols[2].metric("M6 Bakiye", format_money(m6_balance), format_pct(m6_return), delta_color=style_metric_delta(m6_return))
+    cols[3].metric("Acik Pozisyon", str(len(open_positions)), f"{trade_count} kapali islem")
+    cols[4].metric("Piyasa Nefesi", format_pct(breadth["avg_change"]), f"{breadth['gainers']} / {breadth['losers']}", delta_color=style_metric_delta(breadth["avg_change"]))
+    cols[5].metric("Onde Model", best_model, format_pct(best_model_return), delta_color=style_metric_delta(best_model_return))
+    cols[6].metric("Toplam Sermaye", format_money(total_balance), format_money(total_pnl), delta_color=style_metric_delta(total_pnl))
 
 
 def render_section_header(title: str, copy: str, right: str = "") -> None:
