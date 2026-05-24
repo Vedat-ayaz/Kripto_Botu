@@ -1433,26 +1433,17 @@ def run_portfolio_backtest(
                         if not (last3["close"] > last3[ema_col]).all():
                             continue
 
-                    # LONG-specific (v9): BEAR rejimde SADECE çok güçlü trend coinlerinde gir.
-                    # 4 katmanlı sıkı filtre — bunlardan herhangi biri fail ederse continue:
-                    #   1) coin_own_bull (EMA200 üstü) → temel
-                    #   2) ADX ≥ 28 → güçlü trend (yataylarda gir-me)
-                    #   3) son 14 gün momentum ≥ %3 → coin gerçekten yükselişte
-                    #   4) choppiness < 50 → range market değil
-                    if in_global_bear:
-                        if not coin_own_bull:
-                            continue
-                        _bear_adx = float(row.get("adx", 0.0))
-                        if _bear_adx < 28:
-                            continue
-                        _bear_chop = float(row.get("choppiness", 100.0))
-                        if _bear_chop > 50:
-                            continue
-                        _bars_14d = 14 * 24
-                        if len(slice_df) > _bars_14d:
-                            _p14 = float(slice_df.iloc[-_bars_14d]["close"])
-                            if _p14 > 0 and (price / _p14 - 1.0) < 0.03:
-                                continue
+                    # LONG-specific (v11b): BEAR rejimde TAMAMEN STAY FLAT.
+                    # v9'da 4-katlı sıkı filtre, v10'da SHORT denendi → ikisi de başarısız (-%7 ila -%10).
+                    # Akademik: Liu et al. (arxiv 2209.05559), QuantInsti regime-adaptive trading.
+                    # BULL'a dönüşte M6 agresif modu devreye girer.
+                    # v11b: in_global_bear bar bazında değişiyor (smoke'da 12 trade engellendi),
+                    # daha sıkı kapsam için 3 paralel BEAR sinyalini OR'la:
+                    #   - in_global_bear (regime_ctrl entry boost ≥ 0.07)
+                    #   - in_strong_bear (regime_ctrl entry boost ≥ 0.20)
+                    #   - _btc_m1_active False (BTC EMA200 altında — global rejim teyidi)
+                    if in_global_bear or in_strong_bear or (not _btc_m1_active):
+                        continue
 
                 else:
                     # SHORT-specific: EMA50 aşağıda olmalı (son 2 bar close < EMA50)
