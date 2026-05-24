@@ -104,6 +104,44 @@ if [[ $# -gt 0 ]]; then
             echo ""
             echo -e "  ${YELLOW}Beklemek için: wait $PID1 $PID2 $PID3 && bash test_bot.sh m5-karsilastir${RESET}"
             exit 0 ;;
+        m6-bull)
+            run_test \
+                "python3 crypto_portfolio_test.py --start 2025-02-01 --end 2025-08-31 --m6 --coins 30 --universe" \
+                "M6 — Boğa Dönemi (2025-02-01 → 2025-08-31)"
+            exit 0 ;;
+        m6-bear)
+            run_test \
+                "python3 crypto_portfolio_test.py --start 2025-06-01 --end 2026-01-31 --m6 --coins 30 --universe" \
+                "M6 — Ayı Dönemi (2025-06-01 → 2026-01-31)"
+            exit 0 ;;
+        m6-karma)
+            run_test \
+                "python3 crypto_portfolio_test.py --start 2025-05-15 --end 2026-05-15 --m6 --coins 30 --universe" \
+                "M6 — Karma / Tam Yıl (2025-05-15 → 2026-05-15)"
+            exit 0 ;;
+        m6-now|m6-current)
+            run_test \
+                "python3 crypto_portfolio_test.py --m6 --coins 30 --universe --days 90" \
+                "M6 — Son 90 Gün (güncel durum)"
+            exit 0 ;;
+        m6-all)
+            echo ""
+            echo -e "${BOLD}  ⚡ M6: 3 dönem testi başlatılıyor (paralel)...${RESET}"
+            echo ""
+            python3 crypto_portfolio_test.py --start 2025-02-01 --end 2025-08-31 --m6 --coins 30 --universe \
+                > uzun_donem_testler/boga_M6.txt 2>&1 &
+            PID1=$!
+            python3 crypto_portfolio_test.py --start 2025-06-01 --end 2026-01-31 --m6 --coins 30 --universe \
+                > uzun_donem_testler/ayi_M6.txt 2>&1 &
+            PID2=$!
+            python3 crypto_portfolio_test.py --start 2025-05-15 --end 2026-05-15 --m6 --coins 30 --universe \
+                > uzun_donem_testler/karma_M6.txt 2>&1 &
+            PID3=$!
+            echo -e "  Boğa  PID: $PID1 → uzun_donem_testler/boga_M6.txt"
+            echo -e "  Ayı   PID: $PID2 → uzun_donem_testler/ayi_M6.txt"
+            echo -e "  Karma PID: $PID3 → uzun_donem_testler/karma_M6.txt"
+            echo ""
+            exit 0 ;;
         m5-karsilastir)
             echo ""
             echo -e "${BOLD}╔══════════════════════════════════════════════════════════╗${RESET}"
@@ -209,27 +247,33 @@ fi
 show_menu() {
     echo ""
     echo -e "${BOLD}╔══════════════════════════════════════════════════════════╗${RESET}"
-    echo -e "${BOLD}║          KRİPTO BOT — TEST PANELİ (M5 + M4v14c)         ║${RESET}"
+    echo -e "${BOLD}║       KRİPTO BOT — TEST PANELİ (M6 + M5 + M4)           ║${RESET}"
     echo -e "${BOLD}╚══════════════════════════════════════════════════════════╝${RESET}"
     echo ""
-    echo -e "  ${MAGENTA}── M5 (Son Model — Önerilen) ───────────────────────────${RESET}"
-    echo -e "  ${GREEN}[1]${RESET}  M5 — Boğa dönemi    2025-02-01 → 2025-08-31  (+8.45%)"
-    echo -e "  ${GREEN}[2]${RESET}  M5 — Ayı dönemi     2025-06-01 → 2026-01-31  (+13.54%)"
-    echo -e "  ${GREEN}[3]${RESET}  M5 — Karma/Tam yıl  2025-05-15 → 2026-05-15  (+5.32%)"
-    echo -e "  ${GREEN}[4]${RESET}  M5 — Son 90 gün     (güncel piyasa)"
+    echo -e "  ${MAGENTA}── M6 (En Yeni — AGRESİF, Önerilen) ────────────────────${RESET}"
+    echo -e "  ${GREEN}[1]${RESET}  M6 — Boğa dönemi    2025-02-01 → 2025-08-31  (+15.16%)"
+    echo -e "  ${GREEN}[2]${RESET}  M6 — Ayı dönemi     2025-06-01 → 2026-01-31  (+16.66%)"
+    echo -e "  ${GREEN}[3]${RESET}  M6 — Karma/Tam yıl  2025-05-15 → 2026-05-15  (+11.17%)"
+    echo -e "  ${GREEN}[4]${RESET}  M6 — Son 90 gün     (güncel piyasa)"
     echo ""
-    echo -e "  ${MAGENTA}── M4 (Stabil Referans) ────────────────────────────────${RESET}"
-    echo -e "  ${YELLOW}[5]${RESET}  M4 — Boğa dönemi    2025-02-01 → 2025-08-31  (+9.25%)"
-    echo -e "  ${YELLOW}[6]${RESET}  M4 — Ayı dönemi     2025-06-01 → 2026-01-31  (+11.12%)"
-    echo -e "  ${YELLOW}[7]${RESET}  M4 — Karma/Tam yıl  2025-05-15 → 2026-05-15  (+5.26%)"
-    echo -e "  ${YELLOW}[8]${RESET}  M4 — Son 90 gün     (güncel piyasa)"
+    echo -e "  ${MAGENTA}── M5 (Stabil) ─────────────────────────────────────────${RESET}"
+    echo -e "  ${CYAN}[5]${RESET}  M5 — Boğa dönemi    2025-02-01 → 2025-08-31  (+8.45%)"
+    echo -e "  ${CYAN}[6]${RESET}  M5 — Ayı dönemi     2025-06-01 → 2026-01-31  (+13.54%)"
+    echo -e "  ${CYAN}[7]${RESET}  M5 — Karma/Tam yıl  2025-05-15 → 2026-05-15  (+5.32%)"
+    echo -e "  ${CYAN}[8]${RESET}  M5 — Son 90 gün     (güncel piyasa)"
+    echo ""
+    echo -e "  ${MAGENTA}── M4 (Referans) ───────────────────────────────────────${RESET}"
+    echo -e "  ${YELLOW}[9]${RESET}  M4 — Boğa dönemi    2025-02-01 → 2025-08-31  (+9.25%)"
+    echo -e "  ${YELLOW}[10]${RESET} M4 — Ayı dönemi     2025-06-01 → 2026-01-31  (+11.12%)"
+    echo -e "  ${YELLOW}[11]${RESET} M4 — Karma/Tam yıl  2025-05-15 → 2026-05-15  (+5.26%)"
+    echo -e "  ${YELLOW}[12]${RESET} M4 — Son 90 gün     (güncel piyasa)"
     echo ""
     echo -e "  ${MAGENTA}── Özel Tarih ──────────────────────────────────────────${RESET}"
-    echo -e "  ${CYAN}[9]${RESET}  İstediğim tarihi test et  (tarih + mod seçimi)"
+    echo -e "  ${CYAN}[13]${RESET} İstediğim tarihi test et  (tarih + mod seçimi)"
     echo ""
     echo -e "  ${MAGENTA}── Diğer ───────────────────────────────────────────────${RESET}"
-    echo -e "  ${YELLOW}[10]${RESET} M1 — Son 30 gün (hızlı kontrol)"
-    echo -e "  ${CYAN}[11]${RESET} M5 vs M4 — Karşılaştırma tablosu"
+    echo -e "  ${YELLOW}[14]${RESET} M1 — Son 30 gün (hızlı kontrol)"
+    echo -e "  ${CYAN}[15]${RESET} M6 vs M5 vs M4 — Karşılaştırma tablosu"
     echo ""
     echo -e "  ${RED}[0]${RESET}  Çıkış"
     echo ""
@@ -241,50 +285,71 @@ while true; do
     read -r secim
 
     case "$secim" in
-        # ── M5 hazır dönemler ──────────────────────────────────
+        # ── M6 hazır dönemler (AGRESİF) ────────────────────────
         1)
+            run_test \
+                "python3 crypto_portfolio_test.py --start 2025-02-01 --end 2025-08-31 --m6 --coins 30 --universe" \
+                "M6 — Boğa Dönemi (2025-02-01 → 2025-08-31)"
+            ;;
+        2)
+            run_test \
+                "python3 crypto_portfolio_test.py --start 2025-06-01 --end 2026-01-31 --m6 --coins 30 --universe" \
+                "M6 — Ayı Dönemi (2025-06-01 → 2026-01-31)"
+            ;;
+        3)
+            run_test \
+                "python3 crypto_portfolio_test.py --start 2025-05-15 --end 2026-05-15 --m6 --coins 30 --universe" \
+                "M6 — Karma / Tam Yıl (2025-05-15 → 2026-05-15)"
+            ;;
+        4)
+            run_test \
+                "python3 crypto_portfolio_test.py --m6 --coins 30 --universe --days 90" \
+                "M6 — Son 90 Gün (güncel)"
+            ;;
+        # ── M5 hazır dönemler ──────────────────────────────────
+        5)
             run_test \
                 "python3 crypto_portfolio_test.py --start 2025-02-01 --end 2025-08-31 --m5 --coins 15" \
                 "M5 — Boğa Dönemi (2025-02-01 → 2025-08-31)"
             ;;
-        2)
+        6)
             run_test \
                 "python3 crypto_portfolio_test.py --start 2025-06-01 --end 2026-01-31 --m5 --coins 15" \
                 "M5 — Ayı Dönemi (2025-06-01 → 2026-01-31)"
             ;;
-        3)
+        7)
             run_test \
                 "python3 crypto_portfolio_test.py --start 2025-05-15 --end 2026-05-15 --m5 --coins 15" \
                 "M5 — Karma / Tam Yıl (2025-05-15 → 2026-05-15)"
             ;;
-        4)
+        8)
             run_test \
                 "python3 crypto_portfolio_test.py --m5 --coins 15 --days 90" \
                 "M5 — Son 90 Gün (güncel)"
             ;;
         # ── M4 hazır dönemler ──────────────────────────────────
-        5)
+        9)
             run_test \
                 "python3 crypto_portfolio_test.py --start 2025-02-01 --end 2025-08-31 --m4 --coins 15" \
                 "M4 — Boğa Dönemi (2025-02-01 → 2025-08-31)"
             ;;
-        6)
+        10)
             run_test \
                 "python3 crypto_portfolio_test.py --start 2025-06-01 --end 2026-01-31 --m4 --coins 15" \
                 "M4 — Ayı Dönemi (2025-06-01 → 2026-01-31)"
             ;;
-        7)
+        11)
             run_test \
                 "python3 crypto_portfolio_test.py --start 2025-05-15 --end 2026-05-15 --m4 --coins 15" \
                 "M4 — Karma / Tam Yıl (2025-05-15 → 2026-05-15)"
             ;;
-        8)
+        12)
             run_test \
                 "python3 crypto_portfolio_test.py --m4 --coins 15 --days 90" \
                 "M4 — Son 90 Gün (güncel)"
             ;;
         # ── Özel tarih seçimi ──────────────────────────────────
-        9)
+        13)
             echo ""
             printf "  Başlangıç tarihi (YYYY-MM-DD, örn: 2024-01-01): "
             read -r t_start
@@ -292,10 +357,11 @@ while true; do
             read -r t_end
             echo ""
             echo -e "  Mod seç:"
-            echo -e "  ${GREEN}[1]${RESET} M5  — Son model (önerilen)"
-            echo -e "  ${YELLOW}[2]${RESET} M4  — Stabil referans"
-            echo -e "  ${CYAN}[3]${RESET} M1  — Sade trend-following"
-            printf "  [1/2/3, varsayılan=1]: "
+            echo -e "  ${GREEN}[1]${RESET} M6  — En yeni (AGRESİF, önerilen)"
+            echo -e "  ${CYAN}[2]${RESET} M5  — Stabil"
+            echo -e "  ${YELLOW}[3]${RESET} M4  — Referans"
+            echo -e "  ${MAGENTA}[4]${RESET} M1  — Sade trend-following"
+            printf "  [1/2/3/4, varsayılan=1]: "
             read -r t_mod
             printf "  Dosyaya kaydet? (örn: test_ocak2025  — boş=sadece ekran): "
             read -r t_file
@@ -304,9 +370,10 @@ while true; do
             [[ -n "$t_start" ]] && S_FLAG="--start $t_start"
             [[ -n "$t_end"   ]] && E_FLAG="--end $t_end"
             case "$t_mod" in
-                2) M_FLAG="--m4 --coins 15" ;;
-                3) M_FLAG="--coins 15" ;;
-                *) M_FLAG="--m5 --coins 15" ;;
+                2) M_FLAG="--m5 --coins 15" ;;
+                3) M_FLAG="--m4 --coins 15" ;;
+                4) M_FLAG="--coins 15" ;;
+                *) M_FLAG="--m6 --coins 30 --universe" ;;
             esac
 
             if [[ -n "$t_file" ]]; then
@@ -319,23 +386,28 @@ while true; do
             fi
             ;;
         # ── Diğer ──────────────────────────────────────────────
-        10)
+        14)
             run_test \
                 "python3 crypto_portfolio_test.py --days 30" \
                 "M1 — Son 30 Gün (hızlı kontrol)"
             ;;
-        11)
+        15)
             echo ""
             echo -e "${BOLD}╔══════════════════════════════════════════════════════════╗${RESET}"
-            echo -e "${BOLD}║              M5 vs M4 — KARŞILAŞTIRMA                   ║${RESET}"
+            echo -e "${BOLD}║         M6 vs M5 vs M4 — KARŞILAŞTIRMA                 ║${RESET}"
             echo -e "${BOLD}╚══════════════════════════════════════════════════════════╝${RESET}"
             for label in "boga:🐂 BOĞA " "ayi:🐻 AYI  " "karma:🔀 KARMA"; do
                 fname="${label%%:*}"
                 lname="${label##*:}"
                 echo ""
                 echo -e "  ${BOLD}$lname${RESET}"
+                if [[ -f "uzun_donem_testler/${fname}_M6.txt" ]]; then
+                    echo -e "    ${GREEN}M6:${RESET}"
+                    grep -E "Bitiş Sermaye|Max Düşüş|Kazanma Oranı" \
+                        "uzun_donem_testler/${fname}_M6.txt" | sed 's/^/      /'
+                fi
                 if [[ -f "uzun_donem_testler/${fname}_M5.txt" ]]; then
-                    echo -e "    ${GREEN}M5:${RESET}"
+                    echo -e "    ${CYAN}M5:${RESET}"
                     grep -E "Bitiş Sermaye|Max Düşüş|Kazanma Oranı" \
                         "uzun_donem_testler/${fname}_M5.txt" | sed 's/^/      /'
                 fi

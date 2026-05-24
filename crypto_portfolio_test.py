@@ -64,6 +64,8 @@ UNIVERSE = [
     # Özel / sabit
     "LEO/USDT", "ETC/USDT", "HBAR/USDT",
     "ALGO/USDT", "VET/USDT", "FIL/USDT",
+    # M6 v7: yeni yüksek-momentumlu coinler (2024-2025 büyük hareketler)
+    "SUI/USDT", "TIA/USDT", "TON/USDT", "JUP/USDT", "WIF/USDT",
 ]
 
 # Varsayılan aktif coin listesi (--universe olmadan kullanılan sabit liste)
@@ -249,6 +251,22 @@ PROFILES: dict[str, dict] = {
     "FIL/USDT":  dict(adx_threshold=27, rsi_lower=50, atr_stop_multiplier=3.0,
                       trailing_stop_atr_multiplier=6.0, entry_score_trend=0.68, entry_score_ranging=0.73,
                       max_position_pct=0.04, sl_cooldown_hours=48),
+    # ── M6 v7: yüksek momentumlu yeni coinler (volatil → temkinli profil) ────
+    "SUI/USDT":  dict(adx_threshold=27, rsi_lower=50, atr_stop_multiplier=2.8,
+                      trailing_stop_atr_multiplier=6.0, entry_score_trend=0.67, entry_score_ranging=0.72,
+                      max_position_pct=0.06, sl_cooldown_hours=36),
+    "TIA/USDT":  dict(adx_threshold=28, rsi_lower=50, atr_stop_multiplier=3.0,
+                      trailing_stop_atr_multiplier=6.0, entry_score_trend=0.68, entry_score_ranging=0.73,
+                      max_position_pct=0.04, sl_cooldown_hours=48),
+    "TON/USDT":  dict(adx_threshold=25, rsi_lower=50, atr_stop_multiplier=2.5,
+                      trailing_stop_atr_multiplier=5.5, entry_score_trend=0.65, entry_score_ranging=0.70,
+                      max_position_pct=0.06, sl_cooldown_hours=36),
+    "JUP/USDT":  dict(adx_threshold=28, rsi_lower=50, atr_stop_multiplier=3.0,
+                      trailing_stop_atr_multiplier=6.0, entry_score_trend=0.68, entry_score_ranging=0.73,
+                      max_position_pct=0.04, sl_cooldown_hours=48),
+    "WIF/USDT":  dict(adx_threshold=30, rsi_lower=50, atr_stop_multiplier=3.5,
+                      trailing_stop_atr_multiplier=7.0, entry_score_trend=0.70, entry_score_ranging=0.75,
+                      max_position_pct=0.03, sl_cooldown_hours=48),
 }
 
 # Risk parametreleri (global)
@@ -708,6 +726,7 @@ def run_portfolio_backtest(
     auto_mode: bool = False,        # True → Rejime göre otomatik mod seçimi
     m4_mode: bool = False,          # True → M4: intra-simulation rejim checkpoint + rolling WFO
     m5_mode: bool = False,          # True → M5: ATR-percentile sizing + circuit breaker + ER gate + momentum decay
+    m6_mode: bool = False,          # True → M6: agresif pyramiding + erken trailing zoom + büyük pozisyon
     json_out: Optional[str] = None, # Opsiyonel JSON state dosyası yolu (live dashboard için)
 ) -> None:
     _label = label or f"Son {days} Gün"
@@ -1044,7 +1063,13 @@ def run_portfolio_backtest(
                 _zoom_trail = pos.trailing_mult
                 # Zoom-out sadece coin kendi boğa trendindeyse aktif (Ayı/Karma'da normal davranış)
                 if pos.is_coin_bull:
-                    if _pnl_pct >= 0.20:          # %20+ kârda — büyük trend yakala
+                    if m6_mode:
+                        # M6: kazananı erken bırak — düşük kârda shake-out azalt
+                        if   _pnl_pct >= 0.25: _zoom_trail = pos.trailing_mult * 2.2
+                        elif _pnl_pct >= 0.15: _zoom_trail = pos.trailing_mult * 1.80
+                        elif _pnl_pct >= 0.08: _zoom_trail = pos.trailing_mult * 1.45
+                        elif _pnl_pct >= 0.03: _zoom_trail = pos.trailing_mult * 1.20
+                    elif _pnl_pct >= 0.20:          # %20+ kârda — büyük trend yakala
                         _zoom_trail = pos.trailing_mult * 2.0
                     elif _pnl_pct >= 0.12:         # %12+ kârda — rahat tut
                         _zoom_trail = pos.trailing_mult * 1.50
@@ -1074,20 +1099,36 @@ def run_portfolio_backtest(
                 # + ADX ≥ 28 filtresi: choppy coinde (BNB gibi) pyramid ateşlenmesin
                 # Threshold: %5 kârda 1. ekleme (%50 lot), %12'de 2. ekleme (%25 lot)
                 _adx_for_pyramid = float(row.get("adx", 0.0))
+                # M6: pyramiding HER ZAMAN açık (coin kendi bull'undayken) — BTC bull gate yok
+                #     3 birim, daha büyük lot, %18 nakit cap → büyük trende para döker
                 # M4v14: not use_universe → _btc_m1_active (dinamik BTC bull tespiti)
-                if (pos.is_coin_bull and not pos.is_short and pos.pyramid_count < 2
-                        and m4_mode and _btc_m1_active and atr > 0
-                        and _adx_for_pyramid >= 28):   # M4v12: choppy coinde pyramid yok
-                    _pyramid_thresholds = [0.05, 0.12]
+                _pyr_base = pos.is_coin_bull and not pos.is_short and atr > 0
+                _pyr_m6 = (_pyr_base and m6_mode and pos.pyramid_count < 4
+                           and _adx_for_pyramid >= 24)
+                _pyr_m4 = (_pyr_base and not m6_mode and pos.pyramid_count < 2
+                           and m4_mode and _btc_m1_active and _adx_for_pyramid >= 28)
+                if _pyr_m6 or _pyr_m4:
+                    if m6_mode:
+                        # M6: v3 pyramid (sweet spot) + 4. moonshot birim korunuyor
+                        _pyramid_thresholds = [0.05, 0.12, 0.22, 0.35]
+                        _pyramid_sizes      = [0.60, 0.40, 0.25, 0.15]
+                        _pyr_cash_cap       = 0.15
+                    else:
+                        _pyramid_thresholds = [0.05, 0.12]
+                        _pyramid_sizes      = [0.50, 0.25]
+                        _pyr_cash_cap       = 0.10
                     for _pi, _pthresh in enumerate(_pyramid_thresholds):
                         if _pnl_pct >= _pthresh and pos.pyramid_count == _pi:
-                            # Ekleme boyutu: 1. ekleme orijinalin %50'si, 2. ekleme %25'i
-                            _add_size = pos.size_at_entry * (0.50 if _pi == 0 else 0.25)
+                            # M6: 2. ve 3. birim için BTC bull onayı gerekir
+                            # → bear bölgesinde compounding'i kapat (Karma DD'sini azaltır)
+                            if m6_mode and _pi >= 1 and not _btc_m1_active:
+                                break
+                            _add_size = pos.size_at_entry * _pyramid_sizes[_pi]
                             _add_fill = price * (1 + SLIPPAGE)
                             _add_comm = _add_fill * _add_size * COMMISSION
                             _add_cost = _add_fill * _add_size + _add_comm
-                            # Güvenlik: yeterli nakit var mı? (maks bakiyenin %10'u)
-                            if _add_cost <= balance * 0.10 and _add_cost >= MIN_ORDER_SIZE:
+                            # Güvenlik: yeterli nakit var mı?
+                            if _add_cost <= balance * _pyr_cash_cap and _add_cost >= MIN_ORDER_SIZE:
                                 pos.size += _add_size
                                 pos.pyramid_cost += _add_cost
                                 balance -= _add_cost
@@ -1456,8 +1497,10 @@ def run_portfolio_backtest(
                         _rr = _avg_win / _avg_loss if _avg_loss > 0 else 1.0
                         _k  = _wr - (1 - _wr) / _rr
                         kelly_scale = float(np.clip(_k / 2.0, 0.5, 2.0))  # half-Kelly
-                # Kombine büyüklük çarpanı (rejim × ADX × Kelly, maks 2×)
-                combined_mult = float(np.clip(effective_pos_mult * adx_scale * kelly_scale, 0.1, 2.0))
+                # Kombine büyüklük çarpanı (rejim × ADX × Kelly)
+                # M6: coin kendi bull'undayken üst sınır 3.0 (agresif sizing)
+                _mult_cap = 3.0 if (m6_mode and coin_own_bull) else 2.0
+                combined_mult = float(np.clip(effective_pos_mult * adx_scale * kelly_scale, 0.1, _mult_cap))
 
                 # M5-NOT: ATR Percentile Sizing kaldırıldı (v2 revize).
                 # Sorun: Bull trendde ATR yükseliyor → percentile artar → boyut kesilir
@@ -1467,7 +1510,7 @@ def run_portfolio_backtest(
 
                 # ── M5-2: Circuit Breaker boyut çarpanı (sadece çok yıllık testlerde) ──
                 if _m5_cb_active and _cb_mult < 1.0:
-                    combined_mult = float(np.clip(combined_mult * _cb_mult, 0.1, 2.0))
+                    combined_mult = float(np.clip(combined_mult * _cb_mult, 0.1, _mult_cap))
 
                 _conf = float(getattr(signal, 'confidence_score', 0.0) or 0.0)
                 # M4v11: Yüksek güven + coin boğa trendi → daha büyük pozisyon
@@ -1479,11 +1522,14 @@ def run_portfolio_backtest(
                 # 3) Choppiness Index < 56 (trending, 61.8'in altı = normal, <38.2 = güçlü trend)
                 #    BNB gibi choppy coinlerde CI 55-65 → filtre engeller; ETH rally'de CI < 50
                 _chop_now = float(slice_df["choppiness"].iloc[-1]) if "choppiness" in slice_df.columns else 61.8
-                _chop_trending = not pd.isna(_chop_now) and _chop_now < 56.0
+                # M6: high-conf bull eşiklerini gevşet (ADX 22, chop 62) → daha çok entry size boost alır
+                _chop_thr = 62.0 if m6_mode else 56.0
+                _chop_trending = not pd.isna(_chop_now) and _chop_now < _chop_thr
+                _adx_thr = 22 if m6_mode else 28
                 _is_high_conf_bull = (
                     not is_short_signal
                     and coin_own_bull
-                    and _adx_now >= 28
+                    and _adx_now >= _adx_thr
                     and _chop_trending
                 )
                 # SHORT sinyalde global ayı teyidi yoksa (%70 boyut — geçiş döneminde yanlış SHORT riski)
@@ -1491,9 +1537,15 @@ def run_portfolio_backtest(
                     combined_mult *= 0.65
                 risk_pct_adj = risk_pct * combined_mult
                 if _is_high_conf_bull:
-                    # risk_pct_adj'ı %50 artır → pozisyon boyutu %50 büyür
-                    # Üst limit: base risk_pct × 3.0 (aşırı risk önleme)
-                    risk_pct_adj = min(risk_pct_adj * 1.5, risk_pct * 3.0)
+                    # M6 v8: BTC bull onayında SÜPER agresif (×2.6/×3.0), yoksa standart ×2.0
+                    if m6_mode:
+                        if _btc_m1_active:
+                            _m6_boost = 3.0 if _adx_now >= 35 else 2.6
+                        else:
+                            _m6_boost = 2.0   # bear/nötr — risk al ama aşırıya kaçma
+                        risk_pct_adj = min(risk_pct_adj * _m6_boost, risk_pct * 5.0)
+                    else:
+                        risk_pct_adj = min(risk_pct_adj * 1.5, risk_pct * 3.0)
                 risk_amt = balance * risk_pct_adj
                 atr_stop = coin_risk[sym].get("atr_stop_multiplier", ATR_STOP_MULT)
 
@@ -1509,8 +1561,18 @@ def run_portfolio_backtest(
                 # M4v11: Yüksek güven → max_pos_pct de artır (capleme durumunu da kapsar)
                 _max_pos_pct = coin_risk[sym].get("max_position_pct", MAX_POSITION_PCT)
                 if _is_high_conf_bull:
-                    _max_pos_pct = min(_max_pos_pct * 1.5, 0.35)   # 20% → 30% (max 35%)
-                _pos_cap = 2.0 if _is_high_conf_bull else 1.5
+                    if m6_mode:
+                        # M6 v8: BTC bull onayında SÜPER (×3.0, cap %60), yoksa v3 (×2.0, cap %45)
+                        if _btc_m1_active:
+                            _m6_mult = 3.0
+                            _m6_max_cap = 0.60 if _adx_now >= 35 else 0.50
+                        else:
+                            _m6_mult = 2.0
+                            _m6_max_cap = 0.45
+                        _max_pos_pct = min(_max_pos_pct * _m6_mult, _m6_max_cap)
+                    else:
+                        _max_pos_pct = min(_max_pos_pct * 1.5, 0.35)   # 20% → 30% (max 35%)
+                _pos_cap = (3.0 if m6_mode else 2.0) if _is_high_conf_bull else 1.5
                 max_cost = balance * _max_pos_pct * min(combined_mult, _pos_cap)
                 if size * price > max_cost:
                     size = max_cost / price
@@ -1640,7 +1702,7 @@ def run_portfolio_backtest(
     # ── JSON State Export (live dashboard için) ───────────────────────────
     if json_out:
         import json as _json
-        _mode = "M5" if m5_mode else ("M4" if m4_mode else "M1")
+        _mode = "M6" if m6_mode else ("M5" if m5_mode else ("M4" if m4_mode else "M1"))
         # PnL hesapla
         _total_pnl_pct = (balance - initial_capital) / initial_capital * 100
         # Max drawdown
@@ -1917,9 +1979,12 @@ def main() -> None:
                         help="M4 mod: intra-simulation rejim checkpoint (30g) + rolling WFO (60g) + dinamik pozisyon büyüklüğü")
     parser.add_argument("--m5", action="store_true",
                         help="M5 mod: M4 + ATR-percentile sizing + portfolio circuit breaker + ER gate + momentum decay exit")
+    parser.add_argument("--m6", action="store_true",
+                        help="M6 mod: M5 + agresif pyramiding + erken trailing zoom + büyük pozisyon (upside capture)")
     args = parser.parse_args()
 
-    m5_mode   = args.m5
+    m6_mode   = args.m6
+    m5_mode   = args.m5 or m6_mode   # M6, M5'i içerir
     m4_mode   = args.m4 or m5_mode   # M5, M4'ü içerir
     if m4_mode:
         auto_mode = True
@@ -1958,6 +2023,7 @@ def main() -> None:
         auto_mode=args.auto or m4_mode,
         m4_mode=m4_mode,
         m5_mode=m5_mode,
+        m6_mode=m6_mode,
     )
 
 

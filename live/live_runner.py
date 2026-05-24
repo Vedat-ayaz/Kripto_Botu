@@ -36,6 +36,7 @@ from dashboard.state import BotStateDB
 STATE_DIR       = _ROOT / "live" / "state"
 M4_STATE        = str(STATE_DIR / "m4_state.json")
 M5_STATE        = str(STATE_DIR / "m5_state.json")
+M6_STATE        = str(STATE_DIR / "m6_state.json")
 CONFIG_FILE     = STATE_DIR / "config.json"       # sermaye, başlangıç tarihi
 DB_PATH         = str(_ROOT / "dashboard" / "bot_state.db")
 
@@ -76,7 +77,7 @@ def _fresh_start(capital: float, coins: int) -> None:
     print("\n🔄 SIFIRDAN BAŞLATILIYOR...")
 
     # State dosyalarını sil
-    for f in [M4_STATE, M5_STATE]:
+    for f in [M4_STATE, M5_STATE, M6_STATE]:
         if Path(f).exists():
             Path(f).unlink()
             print(f"  🗑  Silindi: {f}")
@@ -87,7 +88,10 @@ def _fresh_start(capital: float, coins: int) -> None:
         print(f"  🗑  DB temizlendi: {DB_PATH}")
 
     # Yeni config kaydet
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    # NOT: Backtest penceresi anlamlı uzunlukta olsun diye start_date'i
+    # 90 gün geriye alıyoruz. Aksi halde start=end=bugün → 0 iteration → 0 trade.
+    # Bot canlıda her run'da 3 aylık simülasyon yapar, son güne kadar gelir.
+    today = (datetime.now(timezone.utc) - timedelta(days=90)).strftime("%Y-%m-%d")
     cfg = {
         "start_date": today,
         "capital": capital,
@@ -176,6 +180,8 @@ def run_once(cfg: dict) -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
 
     # ── M4 ────────────────────────────────────────────────────────────────────
+    # auto_mode=True → BTC rejimine göre UNIVERSE/SYMBOLS otomatik seçilir
+    # use_wfo=True   → Walk-Forward Optimization devrede (canlı = backtest)
     print("\n🔵 M4 çalışıyor...")
     try:
         run_portfolio_backtest(
@@ -184,6 +190,8 @@ def run_once(cfg: dict) -> None:
             n_coins=coins,
             initial_capital=capital,
             m4_mode=True,
+            auto_mode=True,
+            use_wfo=True,
             json_out=M4_STATE,
         )
     except Exception as e:
@@ -198,10 +206,28 @@ def run_once(cfg: dict) -> None:
             n_coins=coins,
             initial_capital=capital,
             m5_mode=True,
+            auto_mode=True,
+            use_wfo=True,
             json_out=M5_STATE,
         )
     except Exception as e:
         print(f"  ❌ M5 hata: {e}")
+
+    # ── M6 ────────────────────────────────────────────────────────────────────
+    print("\n🟢 M6 çalışıyor...")
+    try:
+        run_portfolio_backtest(
+            start_date=start_date,
+            end_date=end_date,
+            n_coins=coins,
+            initial_capital=capital,
+            m6_mode=True,
+            auto_mode=True,
+            use_wfo=True,
+            json_out=M6_STATE,
+        )
+    except Exception as e:
+        print(f"  ❌ M6 hata: {e}")
 
     # ── DB sync ───────────────────────────────────────────────────────────────
     print("\n📊 Dashboard güncelleniyor...")

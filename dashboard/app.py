@@ -55,6 +55,7 @@ PALETTE = {
 STATE_DIR = PROJECT_ROOT / "live" / "state"
 M4_STATE_PATH = STATE_DIR / "m4_state.json"
 M5_STATE_PATH = STATE_DIR / "m5_state.json"
+M6_STATE_PATH = STATE_DIR / "m6_state.json"
 LOCAL_TZ = datetime.now().astimezone().tzinfo or timezone.utc
 DB = BotStateDB()
 
@@ -1114,6 +1115,7 @@ def render_top_metrics(
     breadth: dict[str, Any],
     m4: dict[str, Any],
     m5: dict[str, Any],
+    m6: dict[str, Any],
 ) -> None:
     status = snapshot.get("status") or {}
     open_positions = snapshot.get("open_positions") or []
@@ -1123,16 +1125,20 @@ def render_top_metrics(
     live_balance = safe_float(status.get("account_balance"), safe_float(m4.get("final_balance"), 10_000.0))
     total_pnl = safe_float(status.get("total_pnl"), safe_float(m4.get("total_pnl")))
     trade_count = safe_int(stats.get("total"), len(closed))
-    best_model = "M5" if safe_float(m5.get("total_pnl")) > safe_float(m4.get("total_pnl")) else "M4"
-    best_model_return = safe_float(m5.get("return_pct")) if best_model == "M5" else safe_float(m4.get("return_pct"))
+    # 3 model arasından en yüksek total_pnl'i seç
+    _candidates = [("M4", m4), ("M5", m5), ("M6", m6)]
+    best_name, best_dict = max(_candidates, key=lambda x: safe_float(x[1].get("total_pnl")))
+    best_model = best_name
+    best_model_return = safe_float(best_dict.get("return_pct"))
 
-    cols = st.columns(6)
+    cols = st.columns(7)
     cols[0].metric("Aktif Bakiye", format_money(live_balance), format_money(total_pnl), delta_color=style_metric_delta(total_pnl))
     cols[1].metric("Acik Pozisyon", str(len(open_positions)), f"{trade_count} kapali islem")
     cols[2].metric("Piyasa Nefesi", format_pct(breadth["avg_change"]), f"{breadth['gainers']} / {breadth['losers']}", delta_color=style_metric_delta(breadth["avg_change"]))
     cols[3].metric("M4 Getiri", format_pct(safe_float(m4.get("return_pct"))), f"DD {safe_float(m4.get('drawdown_pct')):.1f}%", delta_color=style_metric_delta(safe_float(m4.get("return_pct"))))
     cols[4].metric("M5 Getiri", format_pct(safe_float(m5.get("return_pct"))), f"DD {safe_float(m5.get('drawdown_pct')):.1f}%", delta_color=style_metric_delta(safe_float(m5.get("return_pct"))))
-    cols[5].metric("Onde Model", best_model, format_pct(best_model_return), delta_color=style_metric_delta(best_model_return))
+    cols[5].metric("M6 Getiri", format_pct(safe_float(m6.get("return_pct"))), f"DD {safe_float(m6.get('drawdown_pct')):.1f}%", delta_color=style_metric_delta(safe_float(m6.get("return_pct"))))
+    cols[6].metric("Onde Model", best_model, format_pct(best_model_return), delta_color=style_metric_delta(best_model_return))
 
 
 def render_section_header(title: str, copy: str, right: str = "") -> None:
@@ -1784,16 +1790,18 @@ def render_model_symbol_comparison(m4: dict[str, Any], m5: dict[str, Any]) -> No
     st.plotly_chart(fig, use_container_width=True)
 
 
-def render_models_tab(m4: dict[str, Any], m5: dict[str, Any]) -> None:
+def render_models_tab(m4: dict[str, Any], m5: dict[str, Any], m6: dict[str, Any]) -> None:
     render_section_header(
-        "M4 / M5 Derin Karsilastirma",
+        "M4 / M5 / M6 Derin Karsilastirma",
         "Ayni donemde hangi model daha temiz, daha guclu ve daha verimli calismis gorebil.",
     )
-    card_left, card_right = st.columns(2)
-    with card_left:
+    card_m4, card_m5, card_m6 = st.columns(3)
+    with card_m4:
         render_model_summary_card(m4, PALETTE["primary"], "Stabil referans")
-    with card_right:
-        render_model_summary_card(m5, PALETTE["success"], "Son model")
+    with card_m5:
+        render_model_summary_card(m5, PALETTE["success"], "Risk dengeli")
+    with card_m6:
+        render_model_summary_card(m6, PALETTE["warning"], "Agresif M6")
 
     render_section_header(
         "Sembol Bazli Model Farki",
@@ -1801,17 +1809,22 @@ def render_models_tab(m4: dict[str, Any], m5: dict[str, Any]) -> None:
     )
     render_model_symbol_comparison(m4, m5)
 
-    trade_left, trade_right = st.columns(2)
-    with trade_left:
+    trade_m4, trade_m5, trade_m6 = st.columns(3)
+    with trade_m4:
         st.markdown("##### M4 Acik Pozisyonlar")
         render_state_open_positions(m4.get("state"))
         st.markdown("##### M4 Son Islemler")
         render_state_trade_table(m4)
-    with trade_right:
+    with trade_m5:
         st.markdown("##### M5 Acik Pozisyonlar")
         render_state_open_positions(m5.get("state"))
         st.markdown("##### M5 Son Islemler")
         render_state_trade_table(m5)
+    with trade_m6:
+        st.markdown("##### M6 Acik Pozisyonlar")
+        render_state_open_positions(m6.get("state"))
+        st.markdown("##### M6 Son Islemler")
+        render_state_trade_table(m6)
 
 
 def render_active_positions(open_positions: list[dict[str, Any]]) -> None:
@@ -2373,8 +2386,9 @@ def main() -> None:
         snapshot = load_bot_snapshot()
         m4 = build_model_summary("M4", load_model_state(str(M4_STATE_PATH)))
         m5 = build_model_summary("M5", load_model_state(str(M5_STATE_PATH)))
+        m6 = build_model_summary("M6", load_model_state(str(M6_STATE_PATH)))
         exchange_name = ((config.get("exchange") or {}).get("name") or "binance").lower()
-        watchlist = build_watchlist(config, [m4, m5])
+        watchlist = build_watchlist(config, [m4, m5, m6])
         market_rows = fetch_market_snapshot(tuple(watchlist), exchange_name) if watchlist else []
         breadth = market_breadth(market_rows)
         signal_df = prepare_signal_df(snapshot.get("signals") or [])
@@ -2387,7 +2401,7 @@ def main() -> None:
             m5=m5,
             bot_status=snapshot.get("status"),
         )
-        render_top_metrics(snapshot=snapshot, breadth=breadth, m4=m4, m5=m5)
+        render_top_metrics(snapshot=snapshot, breadth=breadth, m4=m4, m5=m5, m6=m6)
 
         tabs = st.tabs(
             [
@@ -2415,7 +2429,7 @@ def main() -> None:
                 watchlist=watchlist,
             )
         with tabs[2]:
-            render_models_tab(m4, m5)
+            render_models_tab(m4, m5, m6)
         with tabs[3]:
             render_execution_tab(snapshot)
         with tabs[4]:
