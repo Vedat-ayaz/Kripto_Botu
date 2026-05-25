@@ -998,7 +998,17 @@ def run_portfolio_backtest(
     # Kısa testlerde (≤400 gün) _btc_m1_active sabit kalır → M4v13 davranışı korunur.
     # Boğa (7ay), Ayı (8ay), Karma (12ay) testleri etkilenmez.
     # 2023-2026 gibi çok yıllık testlerde dinamik devreye girer.
-    _btc_m1_active: bool = not use_universe  # Başlangıç: BULL modunda True, Hybrid'de False
+    # v15 FIX: Başlangıç değeri gerçek BTC verisinden belirle.
+    # Önceki hata: use_universe=True → _btc_m1_active=False başlıyordu.
+    # Kısa testlerde (<400 gün) dinamik güncelleme yoktu → stay-flat daima True → 0 trade.
+    # Çözüm: trade_start öncesi BTC datasına bakarak anlık rejimi tespit et.
+    if btc_ind is not None and len(btc_ind) > 0:
+        _init_btc_regime = _assess_btc_regime(btc_ind, trade_start)
+        _btc_m1_active: bool = (_init_btc_regime == "BULL")
+        print(f"  [v15] BTC başlangıç rejimi: {_init_btc_regime} → "
+              f"{'⬆ Amplifikatörler açık' if _btc_m1_active else '⬇ Defansif (stay-flat aktif)'}")
+    else:
+        _btc_m1_active: bool = True  # Veri yoksa iyimser başla
     _btc_m1_dynamic = m4_mode and (_test_duration_days > 400)  # Sadece çok yıllık testlerde
     _btc_m1_last_check: Optional[pd.Timestamp] = None   # İlk günde hemen kontrol edilsin
 
