@@ -39,6 +39,9 @@ M5_STATE        = str(STATE_DIR / "m5_state.json")
 M6_STATE        = str(STATE_DIR / "m6_state.json")
 CONFIG_FILE     = STATE_DIR / "config.json"       # sermaye, başlangıç tarihi
 DB_PATH         = str(_ROOT / "dashboard" / "bot_state.db")
+# v13: Her loop iterasyonunda state kopyalanır — geçmiş test sonuçları kayıt altında
+SNAPSHOT_DIR    = _ROOT / "logs" / "snapshots"
+TRADES_LOG_DIR  = _ROOT / "logs" / "trades"
 
 DEFAULT_CAPITAL      = 1000.0
 DEFAULT_COINS        = 15
@@ -182,9 +185,8 @@ def run_once(cfg: dict) -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
 
     # ── M4 ────────────────────────────────────────────────────────────────────
-    # auto_mode=True → BTC rejimine göre UNIVERSE/SYMBOLS otomatik seçilir
-    # use_wfo=True   → Walk-Forward Optimization devrede (canlı = backtest)
-    print("\n🔵 M4 çalışıyor...")
+    # v13: per-model timeframe — M4/M5 → 15m (swing), M6 → 1m (scalping)
+    print("\n🔵 M4 çalışıyor (15m)...")
     try:
         run_portfolio_backtest(
             start_date=start_date,
@@ -194,13 +196,14 @@ def run_once(cfg: dict) -> None:
             m4_mode=True,
             auto_mode=True,
             use_wfo=True,
+            timeframe="15m",
             json_out=M4_STATE,
         )
     except Exception as e:
         print(f"  ❌ M4 hata: {e}")
 
     # ── M5 ────────────────────────────────────────────────────────────────────
-    print("\n🟣 M5 çalışıyor...")
+    print("\n🟣 M5 çalışıyor (15m)...")
     try:
         run_portfolio_backtest(
             start_date=start_date,
@@ -210,13 +213,14 @@ def run_once(cfg: dict) -> None:
             m5_mode=True,
             auto_mode=True,
             use_wfo=True,
+            timeframe="15m",
             json_out=M5_STATE,
         )
     except Exception as e:
         print(f"  ❌ M5 hata: {e}")
 
     # ── M6 ────────────────────────────────────────────────────────────────────
-    print("\n🟢 M6 çalışıyor...")
+    print("\n🟢 M6 çalışıyor (1m scalping)...")
     try:
         run_portfolio_backtest(
             start_date=start_date,
@@ -226,6 +230,7 @@ def run_once(cfg: dict) -> None:
             m6_mode=True,
             auto_mode=True,
             use_wfo=True,
+            timeframe="1m",
             json_out=M6_STATE,
         )
     except Exception as e:
@@ -236,7 +241,52 @@ def run_once(cfg: dict) -> None:
     db = BotStateDB(DB_PATH)
     _sync_to_db(M5_STATE, db)   # M5 ana bot (dashboard'da gösterilecek)
 
+    # ── State Snapshot (v13) ──────────────────────────────────────────────────
+    # Her iterasyonda state kopyalanır → ileride model performansını analiz edebilmek için
+    # Format: logs/snapshots/m{N}_YYYYMMDD_HHMMSS.json
+    _save_snapshots()
+
     print(f"\n✅ Tamamlandı — {datetime.now().strftime('%H:%M:%S')}")
+
+
+def _save_snapshots() -> None:
+    """Her run sonrası 3 model state'ini tarihli kopya olarak kaydeder."""
+    SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
+    TRADES_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    for model_label, path in [("m4", M4_STATE), ("m5", M5_STATE), ("m6", M6_STATE)]:
+        if not Path(path).exists():
+            continue
+        try:
+            # Tam state snapshot
+            dest = SNAPSHOT_DIR / f"{model_label}_{ts}.json"
+            shutil.copy2(path, dest)
+            # Trades-only append log (analiz için kompakt)
+            with open(path) as f:
+                state = json.load(f)
+            trades = state.get("closed_trades", [])
+            if trades:
+                trades_log = TRADES_LOG_DIR / f"{model_label}_trades.jsonl"
+                with open(trades_log, "a") as f:
+                    f.write(json.dumps({
+                        "snapshot_ts": ts,
+                        "total_trades": len(trades),
+                        "final_balance": state.get("final_balance", 0),
+                        "total_pnl_pct": state.get("total_pnl_pct", 0),
+                        "win_rate": state.get("win_rate", 0),
+                        "max_drawdown_pct": state.get("max_drawdown_pct", 0),
+                    }) + "\n")
+        except Exception as e:
+            print(f"  ⚠️  Snapshot kaydedilemedi ({model_label}): {e}")
+    print(f"  💾 Snapshot kaydedildi: {ts}")
+    # Eski snapshot temizliği — son 14 günden eski olanları sil
+    try:
+        cutoff = datetime.now() - timedelta(days=14)
+        for snap in SNAPSHOT_DIR.glob("*.json"):
+            if datetime.fromtimestamp(snap.stat().st_mtime) < cutoff:
+                snap.unlink()
+    except Exception:
+        pass
 
 
 def run_loop(cfg: dict, interval_seconds: int = 3600) -> None:

@@ -284,6 +284,23 @@ MIN_ORDER_SIZE    = 10.0
 WARMUP_BARS = 210   # EMA200 + buffer
 
 
+# ── Multi-Timeframe Helpers (v13) ─────────────────────────────────────────────
+# Per-model timeframe: M4/M5 → 15m, M6 → 1m. Helper'lar bar-bazlı varsayımları
+# (örn "14 gün × 24 saat = bar") TF-aware hale getirir.
+
+def _bars_per_day(timeframe: str) -> int:
+    """Verilen timeframe'de bir gündeki bar sayısı."""
+    return {"1m": 1440, "5m": 288, "15m": 96, "1h": 24, "4h": 6, "1d": 1}.get(timeframe, 24)
+
+def _tf_to_minutes(timeframe: str) -> int:
+    """Timeframe'in dakika cinsinden uzunluğu."""
+    return {"1m": 1, "5m": 5, "15m": 15, "1h": 60, "4h": 240, "1d": 1440}.get(timeframe, 60)
+
+def _htf_rule_for(timeframe: str) -> str:
+    """Higher-timeframe trend filtresi için uygun pandas resample rule."""
+    return {"1m": "15min", "5m": "1H", "15m": "1H", "1h": "4H", "4h": "1D"}.get(timeframe, "4H")
+
+
 # ── Veri çekimi ───────────────────────────────────────────────────────────────
 
 def fetch_ohlcv(symbol: str, days: int = 365, timeframe: str = "1h") -> pd.DataFrame:
@@ -316,26 +333,28 @@ def fetch_ohlcv(symbol: str, days: int = 365, timeframe: str = "1h") -> pd.DataF
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     cutoff_ts = pd.Timestamp(cutoff)
-    df = df[df.index >= cutoff_ts - pd.Timedelta(hours=WARMUP_BARS)]
+    # v13: WARMUP_BARS bar cinsinden — TF'ye göre dakika hesapla (1h: 210h, 15m: 52.5h, 1m: 3.5h)
+    df = df[df.index >= cutoff_ts - pd.Timedelta(minutes=WARMUP_BARS * _tf_to_minutes(timeframe))]
     return df
 
 
 # ── İndikatör hazırlama ───────────────────────────────────────────────────────
 
-def prepare_indicators(df: pd.DataFrame, indicators: TechnicalIndicators) -> pd.DataFrame:
+def prepare_indicators(df: pd.DataFrame, indicators: TechnicalIndicators, timeframe: str = "1h") -> pd.DataFrame:
     df_ind = indicators.calculate(df)
-    df_ind = indicators.add_higher_timeframe(df_ind, htf_rule="4h")
+    # v13: HTF kuralı timeframe'e göre seçilir (1h→4H, 15m→1H, 1m→15min)
+    df_ind = indicators.add_higher_timeframe(df_ind, htf_rule=_htf_rule_for(timeframe))
     return df_ind
 
 
 # ── Strateji factory ──────────────────────────────────────────────────────────
 
-def _adaptive_choppiness_threshold(df: pd.DataFrame) -> float:
+def _adaptive_choppiness_threshold(df: pd.DataFrame, timeframe: str = "1h") -> float:
     """Coinin son 60 günlük CI ortalamasına göre adaptif choppiness threshold döner.
     Choppy coin (yüksek CI) → düşük threshold (daha katı giriş filtresi).
     Trendy coin (düşük CI) → yüksek threshold (daha gevşek, daha fazla işlem).
     """
-    lookback = 60 * 24  # 60 gün × 24 saat = 1440 bar (1h)
+    lookback = 60 * _bars_per_day(timeframe)  # v13: 60 gün × bar/gün (1h→1440, 15m→5760, 1m→86400)
     recent = df.tail(lookback)
     if 'choppiness' not in recent.columns or len(recent) < 200:
         return 61.8  # fallback default
@@ -416,16 +435,18 @@ def _calc_momentum_decay(df_slice: pd.DataFrame) -> int:
     return score
 
 
-def make_strategy(symbol: str, wfo_params: Optional[dict] = None, coin_df: Optional[pd.DataFrame] = None) -> tuple[TrendFollowingStrategy, dict]:
+def make_strategy(symbol: str, wfo_params: Optional[dict] = None, coin_df: Optional[pd.DataFrame] = None,
+                  timeframe: str = "1h") -> tuple[TrendFollowingStrategy, dict]:
     """
     Coin'e özgü strateji oluşturur.
     Öncelik: WFO params > PROFILES > BASELINE
     wfo_params: WFO motorunun bulduğu parametreler (None ise PROFILES kullanılır)
+    timeframe: v13 — adaptive choppiness ve TF-bağımlı parametreler için
     """
     # WFO metadata anahtarlarını (_wfo_score vb.) temizle
     clean_wfo = {k: v for k, v in (wfo_params or {}).items() if not k.startswith('_')} if wfo_params else {}
     # Adaptif choppiness: WFO'da yoksa coinin CI ortalamasından hesapla
-    adaptive_chop = _adaptive_choppiness_threshold(coin_df) if coin_df is not None else 61.8
+    adaptive_chop = _adaptive_choppiness_threshold(coin_df, timeframe=timeframe) if coin_df is not None else 61.8
     if 'choppiness_threshold' not in clean_wfo:
         p = {**BASELINE, 'choppiness_threshold': adaptive_chop, **PROFILES.get(symbol, {}), **clean_wfo}
     else:
@@ -697,7 +718,8 @@ def _run_rolling_wfo(
             continue
 
         df_upto = sym_ind[sym][sym_ind[sym].index < ts]
-        min_bars = M4_WFO_ROLLING_LOOKBACK * 24 + 250
+        # v13: bars_per_day TF'ye göre — 1h:24, 15m:96, 1m:1440
+        min_bars = M4_WFO_ROLLING_LOOKBACK * _bpd + 250
         if len(df_upto) < min_bars:
             continue
 
@@ -727,8 +749,19 @@ def run_portfolio_backtest(
     m4_mode: bool = False,          # True → M4: intra-simulation rejim checkpoint + rolling WFO
     m5_mode: bool = False,          # True → M5: ATR-percentile sizing + circuit breaker + ER gate + momentum decay
     m6_mode: bool = False,          # True → M6: agresif pyramiding + erken trailing zoom + büyük pozisyon
+    timeframe: Optional[str] = None,# v13: Bar timeframe. None → M4/M5=15m, M6=1m, default=1h
     json_out: Optional[str] = None, # Opsiyonel JSON state dosyası yolu (live dashboard için)
 ) -> None:
+    # v13: Per-model timeframe — M4/M5 → 15m (orta-vade swing), M6 → 1m (scalping)
+    if timeframe is None:
+        if m6_mode:
+            timeframe = "1m"
+        elif m5_mode or m4_mode:
+            timeframe = "15m"
+        else:
+            timeframe = "1h"
+    _bpd = _bars_per_day(timeframe)
+    _tf_mins = _tf_to_minutes(timeframe)
     _label = label or f"Son {days} Gün"
     print(f"\n{'='*72}")
     print(f"  KRIPTO PORTFOLIO BACKTEST — {_label} | Sermaye: ${initial_capital:,.0f}")
@@ -739,9 +772,10 @@ def run_portfolio_backtest(
     raw_data: dict[str, pd.DataFrame] = {}
     # auto_mode veya use_universe=True ise tüm evreni çek (rejim tespiti sonrası mod belirlenir)
     fetch_list = UNIVERSE if (use_universe or auto_mode) else SYMBOLS
+    print(f"  Timeframe: {timeframe} ({_bpd} bar/gün)")
     for sym in fetch_list:
         try:
-            df = fetch_ohlcv(sym, days=days + 5)
+            df = fetch_ohlcv(sym, days=days + 5, timeframe=timeframe)
             raw_data[sym] = df
             print(f"  {sym:<12} {len(df):>5} bar  "
                   f"({df.index[0].strftime('%Y-%m-%d')} → {df.index[-1].strftime('%Y-%m-%d')})")
@@ -749,10 +783,11 @@ def run_portfolio_backtest(
             print(f"  {sym:<12} HATA: {e}")
 
     # Rejim için BTC verisi (listede yoksa ayrıca çek)
+    # v13: BTC rejim tespiti her zaman GÜNLÜK (1d) bar kullanır — daha stabil ve gürültüsüz
     if "BTC/USDT" not in raw_data:
         try:
             print("  BTC/USDT  (rejim için ayrıca çekiliyor...)")
-            raw_data["_BTC_REGIME_"] = fetch_ohlcv("BTC/USDT", days=days + 5)
+            raw_data["_BTC_REGIME_"] = fetch_ohlcv("BTC/USDT", days=days + 5, timeframe=timeframe)
         except Exception as e:
             print(f"  BTC rejim verisi alınamadı: {e}")
 
@@ -762,7 +797,7 @@ def run_portfolio_backtest(
     sym_ind: dict[str, pd.DataFrame] = {}
     for sym, df in raw_data.items():
         try:
-            sym_ind[sym] = prepare_indicators(df, indicators_obj)
+            sym_ind[sym] = prepare_indicators(df, indicators_obj, timeframe=timeframe)
         except Exception as e:
             print(f"  {sym}: indikatör hatası — {e}")
 
@@ -888,7 +923,7 @@ def run_portfolio_backtest(
         wfo_p = wfo_results.get(sym) if wfo_results else None
         if wfo_p:
             logger.info(f"[WFO] {sym} için optimize parametreler kullanılıyor (skor={wfo_p.get('_wfo_score', 0):.3f})")
-        strat, rp = make_strategy(sym, wfo_params=wfo_p, coin_df=sym_ind.get(sym))
+        strat, rp = make_strategy(sym, wfo_params=wfo_p, coin_df=sym_ind.get(sym), timeframe=timeframe)
         strategies[sym] = strat
         coin_risk[sym] = rp
 
@@ -1452,7 +1487,7 @@ def run_portfolio_backtest(
                         if not (last2["close"] < last2[ema_col]).all():
                             continue  # EMA50 üzerindeyken short açma
                     # SHORT-specific: 14-günlük negatif momentum teyidi (downtrend onayı)
-                    bars_14d = 14 * 24
+                    bars_14d = 14 * _bpd  # v13: TF'ye göre (1h:336, 15m:1344, 1m:20160)
                     if len(slice_df) > bars_14d:
                         price_14d_ago = float(slice_df.iloc[-bars_14d]["close"])
                         change_14d = (price / price_14d_ago) - 1
@@ -1631,7 +1666,10 @@ def run_portfolio_backtest(
 
                 # M4v11: hold_bars değiştirilmedi — 24h mecburi tutma Karma/Ayı döneminde zararlı
                 # Trend tersine döndüğünde SE erken çıkışı koruyucu, kaldırılmaz
-                hold_bars = 12 if coin_own_bull else 6
+                # v13: bar-cinsinden hold süresi (1h: 12/6 saat, 15m: 3/1.5 saat, 1m: 12/6 dk)
+                # M6 1m için min hold çok kısa olur — bu yüzden bar oranıyla scale ediyoruz
+                _hold_scale = _bpd / 24  # 1h:1, 15m:4, 1m:60
+                hold_bars = int((12 if coin_own_bull else 6) * _hold_scale)
 
                 pos = PPos(
                     symbol=sym,
