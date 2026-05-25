@@ -1001,12 +1001,18 @@ def run_portfolio_backtest(
     # v15 FIX: Başlangıç değeri gerçek BTC verisinden belirle.
     # Önceki hata: use_universe=True → _btc_m1_active=False başlıyordu.
     # Kısa testlerde (<400 gün) dinamik güncelleme yoktu → stay-flat daima True → 0 trade.
-    # Çözüm: trade_start öncesi BTC datasına bakarak anlık rejimi tespit et.
+    # Çözüm: trade_start ÖNCESI BTC datasına bakarak anlık rejimi tespit et.
+    # BUG FIX A: btc_ind'i trade_start'a kadar kes — ileriye sızan EMA kirlenmesin.
+    # BUG FIX B: NEUTRAL rejim de trade izni vermeli — sadece BEAR stay-flat yapar.
     if btc_ind is not None and len(btc_ind) > 0:
-        _init_btc_regime = _assess_btc_regime(btc_ind, trade_start)
-        _btc_m1_active: bool = (_init_btc_regime == "BULL")
+        _btc_pre_start = btc_ind[btc_ind.index < trade_start]  # Sadece geçmiş veri
+        if len(_btc_pre_start) < 200:
+            _btc_pre_start = btc_ind  # Yeterli geçmiş veri yoksa tamamını kullan
+        _init_btc_regime = _assess_btc_regime(_btc_pre_start, trade_start)
+        # NEUTRAL de trade izni verir — sadece BEAR stay-flat yapar (v15b fix)
+        _btc_m1_active: bool = (_init_btc_regime != "BEAR")
         print(f"  [v15] BTC başlangıç rejimi: {_init_btc_regime} → "
-              f"{'⬆ Amplifikatörler açık' if _btc_m1_active else '⬇ Defansif (stay-flat aktif)'}")
+              f"{'⬆ Trade izni açık' if _btc_m1_active else '⬇ BEAR — stay-flat aktif'}")
     else:
         _btc_m1_active: bool = True  # Veri yoksa iyimser başla
     _btc_m1_dynamic = m4_mode and (_test_duration_days > 400)  # Sadece çok yıllık testlerde
@@ -1825,7 +1831,7 @@ def run_portfolio_backtest(
         for _sym, _df_sym in sym_ind.items():
             _df_range = _df_sym[_df_sym.index >= trade_start]
             if _df_range.empty:
-                _df_range = _df_sym  # veri varsa kullan
+                continue  # BUG FIX: trade_start sonrası veri yok → atla, warmup veriyle yanlış benchmark oluşmasın
             _start_px = float(_df_range.iloc[0]["close"])
             _end_px   = float(_df_range.iloc[-1]["close"])
             _pct_chg  = (_end_px - _start_px) / _start_px * 100 if _start_px > 0 else 0.0
