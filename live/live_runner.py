@@ -88,10 +88,12 @@ def _fresh_start(capital: float, coins: int) -> None:
         print(f"  🗑  DB temizlendi: {DB_PATH}")
 
     # Yeni config kaydet
-    # NOT: Backtest penceresi anlamlı uzunlukta olsun diye start_date'i
-    # 90 gün geriye alıyoruz. Aksi halde start=end=bugün → 0 iteration → 0 trade.
-    # Bot canlıda her run'da 3 aylık simülasyon yapar, son güne kadar gelir.
-    today = (datetime.now(timezone.utc) - timedelta(days=90)).strftime("%Y-%m-%d")
+    # v12: start_date = BUGÜN (forward paper trading).
+    # Önceden 90 gün geri ayarlanıyordu → trade'ler geçmişte oluşuyordu.
+    # Şimdi: bot başlatıldığı andan itibaren paper-trade yapar, trade tarihleri ileri.
+    # Veri yine 365 gün geri çekilir (indikatör warmup için), ama trade simülasyonu
+    # sadece start_date'ten itibaren çalışır. İlk gün 0 trade, her saat 1 bar eklenir.
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     cfg = {
         "start_date": today,
         "capital": capital,
