@@ -1752,6 +1752,70 @@ def render_state_trade_table(model: dict[str, Any], limit: int = 12) -> None:
     st.dataframe(show, use_container_width=True, hide_index=True)
 
 
+def render_coin_benchmark_tab(m4: dict[str, Any], m5: dict[str, Any], m6: dict[str, Any]) -> None:
+    """v15: Bot başlatıldığı andan itibaren her coinin fiyat değişimini göster.
+
+    Kullanıcı isteği: restart anından itibaren coinlerin değer artışını inceleme.
+    Veri kaynağı: state JSON'daki coin_benchmarks — her modelin kendi backtestinden.
+    M5 öncelikli, yoksa M4, yoksa M6.
+    """
+    render_section_header(
+        "Coin Performansi — Bot Baslatilmasindan Bu Yana",
+        "Bot baslatildiginda her coinin fiyatini kayit altına aldik. Asagida o andan simdi kadar ne kadar degistiklerini goruyorsunuz.",
+    )
+
+    # Veri kaynagi — M5 öncelikli
+    benchmarks: list[dict] = []
+    source_label = ""
+    for model, label in [(m5, "M5"), (m4, "M4"), (m6, "M6")]:
+        state = (model or {}).get("state") or {}
+        bm = state.get("coin_benchmarks") or []
+        if bm:
+            benchmarks = bm
+            source_label = label
+            break
+
+    if not benchmarks:
+        st.info("Coin benchmark verisi henüz yok. Bot ilk çalışmasını tamamladığında burada görünecek.")
+        return
+
+    # Özet metrikler
+    rising = sum(1 for b in benchmarks if b.get("pct_change", 0) > 0)
+    falling = sum(1 for b in benchmarks if b.get("pct_change", 0) < 0)
+    avg_chg = sum(b.get("pct_change", 0) for b in benchmarks) / len(benchmarks) if benchmarks else 0
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Takip Edilen Coin", len(benchmarks))
+    col2.metric("Yükselen 📈", rising)
+    col3.metric("Düşen 📉", falling)
+    col4.metric("Ortalama Değişim", f"{avg_chg:+.2f}%")
+
+    # Tablo
+    rows = []
+    for b in benchmarks:
+        sym = b.get("symbol", "")
+        pct = b.get("pct_change", 0.0)
+        start_px = b.get("start_price", 0.0)
+        cur_px = b.get("current_price", 0.0)
+        rows.append({
+            "Coin": symbol_label(sym),
+            "Baslangic $": format_money(start_px, 4 if start_px < 1 else 2),
+            "Simdi $": format_money(cur_px, 4 if cur_px < 1 else 2),
+            "Degisim %": f"{pct:+.2f}%",
+            "Durum": "📈 Yukselis" if pct > 3 else ("📉 Dusus" if pct < -3 else "➡ Stabil"),
+            "Baslangic Tarihi": b.get("start_date", ""),
+        })
+
+    df_bm = pd.DataFrame(rows)
+    st.dataframe(df_bm, use_container_width=True, hide_index=True, height=520)
+
+    st.caption(
+        f"Veri kaynagi: {source_label} modeli · "
+        f"Baslangic: {benchmarks[0].get('start_date', '?')} · "
+        f"Bot ilk calistirildigi andan itibaren her guncelleme ile fiyatlar guncellenir."
+    )
+
+
 def render_state_detailed_trade_table(model: dict[str, Any], limit: int = 50) -> None:
     """v14: Kullanıcı isteği — detaylı işlem tablosu.
 
@@ -2471,6 +2535,7 @@ def main() -> None:
                 "Genel Bakis",
                 "Canli Piyasa",
                 "Modeller",
+                "Coin Takip",
                 "Islem Merkezi",
                 "Zeka ve Ogrenme",
             ]
@@ -2494,8 +2559,10 @@ def main() -> None:
         with tabs[2]:
             render_models_tab(m4, m5, m6)
         with tabs[3]:
-            render_execution_tab(snapshot)
+            render_coin_benchmark_tab(m4, m5, m6)
         with tabs[4]:
+            render_execution_tab(snapshot)
+        with tabs[5]:
             render_intelligence_tab(snapshot, config)
 
     render_live_body()

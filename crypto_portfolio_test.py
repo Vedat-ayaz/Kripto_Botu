@@ -1808,6 +1808,25 @@ def run_portfolio_backtest(
                 "exit_reason": _t.exit_reason,
                 "bars_held": _t.bars_held,
             })
+        # Coin benchmark — bot başlangıcından (trade_start) şimdiye fiyat değişimi
+        # Kullanıcı isteği v15: restart anından itibaren her coinin performansı izlensin
+        _coin_benchmarks = []
+        for _sym, _df_sym in sym_ind.items():
+            _df_range = _df_sym[_df_sym.index >= trade_start]
+            if _df_range.empty:
+                _df_range = _df_sym  # veri varsa kullan
+            _start_px = float(_df_range.iloc[0]["close"])
+            _end_px   = float(_df_range.iloc[-1]["close"])
+            _pct_chg  = (_end_px - _start_px) / _start_px * 100 if _start_px > 0 else 0.0
+            _coin_benchmarks.append({
+                "symbol": _sym,
+                "start_price": round(_start_px, 6),
+                "current_price": round(_end_px, 6),
+                "pct_change": round(_pct_chg, 2),
+                "start_date": trade_start.strftime("%Y-%m-%d %H:%M"),
+            })
+        _coin_benchmarks.sort(key=lambda x: x["pct_change"], reverse=True)
+
         _state = {
             "mode": _mode,
             "run_time": datetime.now(timezone.utc).isoformat(),
@@ -1822,6 +1841,7 @@ def run_portfolio_backtest(
             "total_trades": len(_finished),
             "open_positions": _open,
             "closed_trades": _closed,
+            "coin_benchmarks": _coin_benchmarks,
         }
         import pathlib as _pathlib
         _pathlib.Path(json_out).parent.mkdir(parents=True, exist_ok=True)
