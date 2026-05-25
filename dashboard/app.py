@@ -866,6 +866,9 @@ def prepare_state_trades(trades: list[dict[str, Any]]) -> pd.DataFrame:
                 "exit_date": trade.get("exit_date", ""),
                 "entry_price": safe_float(trade.get("entry_price")),
                 "exit_price": safe_float(trade.get("exit_price")),
+                # v14: kullanıcı isteği — adet (size) ve maliyet (cost) tabloya geldi
+                "size": safe_float(trade.get("size")),
+                "cost": safe_float(trade.get("cost")),
                 "pnl": safe_float(trade.get("pnl")),
                 "pnl_pct": safe_float(trade.get("pnl_pct")),
                 "reason": trade.get("exit_reason", ""),
@@ -1749,6 +1752,41 @@ def render_state_trade_table(model: dict[str, Any], limit: int = 12) -> None:
     st.dataframe(show, use_container_width=True, hide_index=True)
 
 
+def render_state_detailed_trade_table(model: dict[str, Any], limit: int = 50) -> None:
+    """v14: Kullanıcı isteği — detaylı işlem tablosu.
+
+    Her trade için: Kripto, Yön, Adet, Maliyet, Alış tarihi (dk), Satış tarihi (dk),
+    Giriş/Çıkış fiyatı, Kar/Zarar (₺ + %), Durum.
+    """
+    df = model.get("trade_df")
+    if df is None or df.empty:
+        st.info("Henuz islem yok.")
+        return
+
+    show = df.sort_values("exit_dt", ascending=False, na_position="last").head(limit).copy()
+
+    # Format kolonları
+    show["Kripto"] = show["label"]
+    show["Yon"] = show["side"]
+    # Adet — küçük coinlerde 6 ondalık, büyüklerde 4
+    show["Adet"] = show["size"].map(lambda v: f"{v:.6f}" if v < 1 else f"{v:.4f}" if v < 100 else f"{v:.2f}")
+    show["Maliyet"] = show["cost"].map(lambda v: format_money(v))
+    # Tarihler — dakika cinsi (state JSON'dan saatli geliyor)
+    show["Alis"] = show["entry_date"]
+    show["Satis"] = show["exit_date"]
+    show["Giris $"] = show["entry_price"].map(lambda v: format_money(v, 4 if v < 1 else 2))
+    show["Cikis $"] = show["exit_price"].map(lambda v: format_money(v, 4 if v < 1 else 2))
+    show["Kar/Zarar"] = show["pnl"].map(lambda v: format_money(v))
+    show["K/Z %"] = show["pnl_pct"].map(lambda v: format_pct(v))
+    # Durum: kar / zarar metin
+    show["Durum"] = show["pnl"].map(lambda v: "✅ Kar" if v > 0 else ("❌ Zarar" if v < 0 else "⚖ Nötr"))
+
+    show = show[["Kripto", "Yon", "Adet", "Maliyet", "Alis", "Satis",
+                 "Giris $", "Cikis $", "Kar/Zarar", "K/Z %", "Durum"]]
+    st.dataframe(show, use_container_width=True, hide_index=True, height=420)
+    st.caption(f"Toplam {len(df)} kapali islem, son {min(limit, len(show))} tanesi gosteriliyor.")
+
+
 def render_state_open_positions(state: dict[str, Any] | None) -> None:
     positions = (state or {}).get("open_positions") or []
     if not positions:
@@ -1837,6 +1875,19 @@ def render_models_tab(m4: dict[str, Any], m5: dict[str, Any], m6: dict[str, Any]
         render_state_open_positions(m6.get("state"))
         st.markdown("##### M6 Son Islemler")
         render_state_trade_table(m6)
+
+    # v14: Detayli islem gecmisi — her model icin ayri tablo
+    # Kullanici istegi: kripto, adet, alis/satis tarihi (dakika cinsi), kar/zarar durumu
+    render_section_header(
+        "Detayli Islem Gecmisi",
+        "Her model icin: kripto, adet, alis/satis zamani (dakika cinsinden), maliyet ve kar/zarar durumu.",
+    )
+    st.markdown("##### M4 — Detayli Islem Gecmisi")
+    render_state_detailed_trade_table(m4)
+    st.markdown("##### M5 — Detayli Islem Gecmisi")
+    render_state_detailed_trade_table(m5)
+    st.markdown("##### M6 — Detayli Islem Gecmisi")
+    render_state_detailed_trade_table(m6)
 
 
 def render_active_positions(open_positions: list[dict[str, Any]]) -> None:

@@ -1777,7 +1777,8 @@ def run_portfolio_backtest(
             _open.append({
                 "symbol": _sym,
                 "side": "SHORT" if _pos.is_short else "LONG",
-                "entry_date": str(_pos.entry_time.date()) if _pos.entry_time else "",
+                # v14: saatli tarih (dakika cinsi) — kullanıcı isteği
+                "entry_date": _pos.entry_time.strftime("%Y-%m-%d %H:%M") if _pos.entry_time else "",
                 "entry_price": round(_pos.entry_price, 6),
                 "last_price": round(_last_price, 6),
                 "size": round(_pos.size, 6),
@@ -1791,13 +1792,17 @@ def run_portfolio_backtest(
         # Kapalı işlemler (son 100)
         _closed = []
         for _t in reversed(_finished[-100:]):
+            # v14: closed trade'lere size + cost eklendi, tarihler dakika cinsi
+            _t_cost = round(_t.entry_price * _t.size, 2) if _t.size else 0.0
             _closed.append({
                 "symbol": _t.symbol,
                 "side": "SHORT" if _t.is_short else "LONG",
-                "entry_date": str(_t.entry_time.date()) if _t.entry_time else "",
-                "exit_date": str(_t.exit_time.date()) if _t.exit_time else "",
+                "entry_date": _t.entry_time.strftime("%Y-%m-%d %H:%M") if _t.entry_time else "",
+                "exit_date":  _t.exit_time.strftime("%Y-%m-%d %H:%M")  if _t.exit_time  else "",
                 "entry_price": round(_t.entry_price, 6),
                 "exit_price": round(_t.exit_price, 6),
+                "size": round(_t.size, 6) if _t.size else 0.0,
+                "cost": _t_cost,
                 "pnl": round(_t.pnl, 2),
                 "pnl_pct": round((_t.exit_price - _t.entry_price) / _t.entry_price * 100 if not _t.is_short else (_t.entry_price - _t.exit_price) / _t.entry_price * 100, 2),
                 "exit_reason": _t.exit_reason,
