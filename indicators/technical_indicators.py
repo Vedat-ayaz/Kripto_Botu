@@ -225,7 +225,7 @@ class TechnicalIndicators:
     def add_higher_timeframe(
         self,
         df_1h: pd.DataFrame,
-        htf_rule: str = "4H",
+        htf_rule: str = "4h",
         ema_period: int = 50,
         adx_period: int = 14,
     ) -> pd.DataFrame:

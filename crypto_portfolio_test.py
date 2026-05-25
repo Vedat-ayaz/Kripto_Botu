@@ -298,7 +298,8 @@ def _tf_to_minutes(timeframe: str) -> int:
 
 def _htf_rule_for(timeframe: str) -> str:
     """Higher-timeframe trend filtresi için uygun pandas resample rule."""
-    return {"1m": "15min", "5m": "1H", "15m": "1H", "1h": "4H", "4h": "1D"}.get(timeframe, "4H")
+    # pandas 2.2+: "H" → "h", "D" → "D" (büyük harf korunur)
+    return {"1m": "15min", "5m": "1h", "15m": "1h", "1h": "4h", "4h": "1D"}.get(timeframe, "4h")
 
 
 # ── Veri çekimi ───────────────────────────────────────────────────────────────
