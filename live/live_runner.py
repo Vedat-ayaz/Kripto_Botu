@@ -206,12 +206,12 @@ def run_once(cfg: dict) -> None:
     print(f"  Sermaye: ${capital:,.0f}")
     print(f"{'='*60}")
 
-    # ── M4 (15m, 9 sabit coin) ────────────────────────────────────────────────
-    print("\n🔵 M4 tick (15m, SYMBOLS)...")
+    # ── M4 (15m, tüm UNIVERSE) ───────────────────────────────────────────────
+    print(f"\n🔵 M4 tick (15m, UNIVERSE — {len(UNIVERSE)} coin)...")
     try:
         engine_m4 = LiveEngine(
             mode="M4",
-            symbols=SYMBOLS,
+            symbols=UNIVERSE,
             timeframe="15m",
             capital=capital,
             state_file=M4_STATE,
@@ -222,14 +222,12 @@ def run_once(cfg: dict) -> None:
         print(f"  ❌ M4 hata: {e}")
         logger.exception("M4 tick hata")
 
-    # ── M5 (15m, 15 coin universe) ────────────────────────────────────────────
-    print("\n🟣 M5 tick (15m, UNIVERSE)...")
+    # ── M5 (15m, tüm UNIVERSE) ───────────────────────────────────────────────
+    print(f"\n🟣 M5 tick (15m, UNIVERSE — {len(UNIVERSE)} coin)...")
     try:
-        # M5: UNIVERSE'den ilk 15 coin (dinamik seçim yerine sabit liste)
-        m5_symbols = UNIVERSE[:15]
         engine_m5 = LiveEngine(
             mode="M5",
-            symbols=m5_symbols,
+            symbols=UNIVERSE,
             timeframe="15m",
             capital=capital,
             state_file=M5_STATE,
