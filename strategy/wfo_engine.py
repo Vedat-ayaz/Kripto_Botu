@@ -307,7 +307,16 @@ class WalkForwardOptimizer:
             Returns None if there is not enough data or every param combination
             produces fewer than ``min_trades`` trades.
         """
-        in_sample_bars = self.lookback_days * 24
+        # v17 FIX: TF-aware bar hesabı (önceden hardcoded * 24 → 1h varsayıyordu)
+        # DataFrame index'inden timeframe'i otomatik tespit et
+        _tf_bars_per_day = 24  # default 1h
+        if len(df) >= 2:
+            _delta_min = (df.index[1] - df.index[0]).total_seconds() / 60
+            if _delta_min <= 1:      _tf_bars_per_day = 1440  # 1m
+            elif _delta_min <= 5:    _tf_bars_per_day = 288   # 5m
+            elif _delta_min <= 15:   _tf_bars_per_day = 96    # 15m
+            elif _delta_min <= 60:   _tf_bars_per_day = 24    # 1h
+        in_sample_bars = self.lookback_days * _tf_bars_per_day
         min_required   = in_sample_bars + WARMUP_BARS
 
         if len(df) < min_required:

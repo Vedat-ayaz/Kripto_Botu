@@ -185,7 +185,11 @@ def run_once(cfg: dict) -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
 
     # ── M4 ────────────────────────────────────────────────────────────────────
-    # v13: per-model timeframe — M4/M5 → 15m (swing), M6 → 1m (scalping)
+    # v17: Live modda WFO kapalı — her run 2-5 dk (önceden 20+ dk).
+    # WFO yerine PROFILES parametreleri, adaptive regime controller çalışmaya devam eder.
+    # auto_mode=False: BTC rejim tespiti kaldırıldı (auto_mode NEUTRAL/BEAR'de use_wfo=True
+    # zorluyor — caller'ın use_wfo=False ayarını override ediyordu → asıl hang sebebi).
+    # days=90: 365 gün × 96 bar/gün × 30 coin = 1M bar. 90 gün ile 4× hızlı.
     print("\n🔵 M4 çalışıyor (15m)...")
     try:
         run_portfolio_backtest(
@@ -194,9 +198,11 @@ def run_once(cfg: dict) -> None:
             n_coins=coins,
             initial_capital=capital,
             m4_mode=True,
-            auto_mode=True,
-            use_wfo=True,
+            auto_mode=False,
+            use_universe=False,   # 9 sabit coin (SYMBOLS) — PROFILES ile hızlı
+            use_wfo=False,        # Live'da WFO yok — PROFILES parametreleri kullan
             timeframe="15m",
+            days=90,              # 90 gün × 96 bar = ~8640 bar/coin (hızlı)
             json_out=M4_STATE,
         )
     except Exception as e:
@@ -211,15 +217,19 @@ def run_once(cfg: dict) -> None:
             n_coins=coins,
             initial_capital=capital,
             m5_mode=True,
-            auto_mode=True,
-            use_wfo=True,
+            auto_mode=False,
+            use_universe=True,    # UNIVERSE (15 coin) — daha geniş seçim
+            use_wfo=False,
             timeframe="15m",
+            days=90,
             json_out=M5_STATE,
         )
     except Exception as e:
         print(f"  ❌ M5 hata: {e}")
 
     # ── M6 ────────────────────────────────────────────────────────────────────
+    # 1m bar: 365 gün × 1440 bar/gün × 15 coin = 7.8M bar → AWS'de hang.
+    # days=14 ile: 14 × 1440 × 15 = 302,400 bar → yönetilebilir.
     print("\n🟢 M6 çalışıyor (1m scalping)...")
     try:
         run_portfolio_backtest(
@@ -228,9 +238,11 @@ def run_once(cfg: dict) -> None:
             n_coins=coins,
             initial_capital=capital,
             m6_mode=True,
-            auto_mode=True,
-            use_wfo=True,
+            auto_mode=False,
+            use_universe=False,   # 9 coin — 1m'de geniş universe gerekmiyor
+            use_wfo=False,
             timeframe="1m",
+            days=14,              # 1m: sadece 14 gün (302K bar) — scalping için yeterli
             json_out=M6_STATE,
         )
     except Exception as e:
