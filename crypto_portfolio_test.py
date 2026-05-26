@@ -303,7 +303,13 @@ def _htf_rule_for(timeframe: str) -> str:
 def fetch_ohlcv(symbol: str, days: int = 365, timeframe: str = "1h") -> pd.DataFrame:
     """ccxt ile OHLCV çeker. LEO gibi Binance'te olmayan coinler için OKX kullanır."""
     ex_name = SYMBOL_EXCHANGE.get(symbol, "binance")
-    exchange = getattr(ccxt, ex_name)({"enableRateLimit": True, "options": {"defaultType": "spot"}})
+    exchange = getattr(ccxt, ex_name)({
+        "enableRateLimit": True,
+        "options": {
+            "defaultType": "spot",
+            "fetchMarkets": ["spot"],   # ccxt 4.x: sadece spot marketleri yükle
+        },
+    })
     since_ms = int((datetime.now(timezone.utc) - timedelta(days=days + 10)).timestamp() * 1000)
     # OKX max 300 bar, Binance 1000 bar döndürür
     chunk_size = 300 if ex_name == "okx" else 1000
