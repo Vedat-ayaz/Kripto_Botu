@@ -33,14 +33,14 @@ case "${1:-}" in
         ;;
 
     --loop)
-        echo -e "${CYAN}▶ Saatlik döngü başlatılıyor...${RESET}"
+        echo -e "${CYAN}▶ 15 dakikalık döngü başlatılıyor (gerçek zamanlı tick)...${RESET}"
         # Dashboard arka planda
         streamlit run dashboard/app.py --server.port 8501 --server.headless true &
         DASH_PID=$!
         echo -e "${GREEN}  Dashboard: http://localhost:8501  (PID: $DASH_PID)${RESET}"
         echo ""
-        # Runner ön planda (her saat)
-        python live/live_runner.py --loop 3600
+        # Runner ön planda (her 15 dakika = 900 saniye)
+        python live/live_runner.py --loop 900
         ;;
 
     *)
