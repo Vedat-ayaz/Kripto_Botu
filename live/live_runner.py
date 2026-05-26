@@ -173,7 +173,10 @@ def run_once(cfg: dict) -> None:
     start_date = cfg["start_date"]
     capital    = cfg.get("capital", DEFAULT_CAPITAL)
     coins      = cfg.get("coins", DEFAULT_COINS)
-    end_date   = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    # v18 BUG FIX: end_date sadece tarih olunca trade_end = gece yarısı oluyor.
+    # start_date ile aynı gün ise all_ts = 1 bar → sıfır trade.
+    # Çözüm: end_date=None → run_portfolio_backtest datetime.now() kullanır (saatli).
+    end_date   = None  # Her run güncel datetime.now(tz=UTC) kullanılsın
 
     print(f"\n{'='*60}")
     print(f"  LIVE RUNNER — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")

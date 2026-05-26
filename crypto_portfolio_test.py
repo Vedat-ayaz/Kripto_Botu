@@ -187,10 +187,6 @@ PROFILES: dict[str, dict] = {
     "AVAX/USDT": dict(adx_threshold=32, rsi_lower=50, atr_stop_multiplier=3.0,
                       trailing_stop_atr_multiplier=6.0, entry_score_trend=0.72, entry_score_ranging=0.76,
                       max_position_pct=0.03, sl_cooldown_hours=72),
-    # LINK: oracle token, volatil → pozisyon sınırlı, seçici giriş
-    "LINK/USDT": dict(adx_threshold=25, rsi_lower=48, atr_stop_multiplier=2.5,
-                      trailing_stop_atr_multiplier=5.0, entry_score_trend=0.65, entry_score_ranging=0.70,
-                      max_position_pct=0.10, sl_cooldown_hours=24),
     # DOT: yavaş trend → breakout filtresi, küçük pozisyon
     "DOT/USDT":  dict(adx_threshold=26, rsi_lower=50, atr_stop_multiplier=2.5,
                       trailing_stop_atr_multiplier=5.5, entry_score_trend=0.66, entry_score_ranging=0.70,
