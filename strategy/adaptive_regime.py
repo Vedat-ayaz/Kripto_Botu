@@ -217,7 +217,7 @@ class AdaptiveRegimeController:
         if ts in btc_df.index:
             row = btc_df.loc[ts]
             btc_close     = float(row.get("close", 0))
-            btc_ema_slow  = float(row.get("ema_slow", row.get("ema200", 0)))
+            btc_ema_slow  = float(row.get("ema_slow", row.get("ema200", row.get("ema_200", 0))))
             if btc_ema_slow > 0:
                 if btc_close > btc_ema_slow:
                     # Kaç % üstünde? Güçlü boğada daha fazla puan

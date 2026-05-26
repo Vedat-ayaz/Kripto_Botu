@@ -341,6 +341,23 @@ def prepare_indicators(df: pd.DataFrame, indicators: TechnicalIndicators, timefr
     df_ind = indicators.calculate(df)
     # v13: HTF kuralı timeframe'e göre seçilir (1h→4H, 15m→1H, 1m→15min)
     df_ind = indicators.add_higher_timeframe(df_ind, htf_rule=_htf_rule_for(timeframe))
+    # v19 FIX-A: "ema_slow" alias ekle — AdaptiveRegimeController ve set_btc_regime() bu ismi arıyor.
+    # TechnicalIndicators kolonu "ema_200" üretiyor ama regime kodu "ema_slow" arıyor → her zaman 0 dönüyor.
+    # Bu yüzden BTC EMA200 rejim faktörü (ağırlık 1.5) HİÇBİR ZAMAN çalışmıyor.
+    ema_slow_col = indicators.ema_slow_col  # "ema_200" (varsayılan)
+    if ema_slow_col in df_ind.columns and "ema_slow" not in df_ind.columns:
+        df_ind["ema_slow"] = df_ind[ema_slow_col]
+    # v19 FIX: 15m için Choppiness Index'i TF-aware periyotla yeniden hesapla.
+    # Varsayılan period=14 → 15m'de 14×15min = 3.5 saat penceresi (çok kısa → CI hep yüksek).
+    # Hedef: 1h'daki 14-bar CI ile eşdeğer "14 saatlik" pencere = 56 bar.
+    # Sonuç: 15m CI değerleri artık 1h CI ile karşılaştırılabilir → threshold anlamlı çalışır.
+    if timeframe == "15m":
+        from indicators.technical_indicators import _choppiness_index as _ci_fn
+        df_ind["choppiness"] = _ci_fn(df_ind["high"], df_ind["low"], df_ind["close"], period=56)
+    elif timeframe == "1m":
+        # 1m: 56 bar = 56 dakika (1 saatlik pencere → makul scalping CI)
+        from indicators.technical_indicators import _choppiness_index as _ci_fn
+        df_ind["choppiness"] = _ci_fn(df_ind["high"], df_ind["low"], df_ind["close"], period=60)
     return df_ind
 
 
@@ -357,13 +374,18 @@ def _adaptive_choppiness_threshold(df: pd.DataFrame, timeframe: str = "1h") -> f
         return 61.8  # fallback default
     ci_mean = float(recent['choppiness'].dropna().mean())
     if ci_mean > 60:    # Çok choppy coin → sert filtre
-        return 52.0
+        result = 52.0
     elif ci_mean > 55:  # Choppy
-        return 56.0
+        result = 56.0
     elif ci_mean > 50:  # Orta
-        return 61.8
+        result = 61.8
     else:               # Trending coin → gevşek filtre
-        return 65.0
+        result = 65.0
+    # v19 FIX: Kısa TF barlarda CI doğal olarak yüksek çıkar (14-bar penceresi = 3.5h for 15m, 14min for 1m).
+    # Adaptive threshold 52.0'a düşünce 15m'de neredeyse HİÇBİR bar geçemiyor → 0 trade.
+    # 15m için minimum 65.0, 1m için 70.0 — 1h için mevcut mantık korunur.
+    _TF_FLOOR = {"1m": 70.0, "5m": 67.0, "15m": 65.0}
+    return max(result, _TF_FLOOR.get(timeframe, result))
 
 
 # ── M5 Yardımcı Fonksiyonlar ────────────────────────────────────────────────
@@ -1318,9 +1340,12 @@ def run_portfolio_backtest(
                 _ema200_col = next((c for c in ("ema_200", "ema_slow", "ema200") if c in slice_df.columns), None)
                 if _ema200_col:
                     coin_ema200 = float(slice_df[_ema200_col].iloc[-1])
-                    # Coin EMA200'ün en az %3 üzerindeyse gerçek boğa trendi sayılır
+                    # v19 FIX: 15m'de EMA200 = 50 saatlik EMA (200×15min).
+                    # Önceki %3 eşiği: 1h'da ~200h EMA için mantıklıydı, 15m'de 50h EMA için çok sert.
+                    # Normal çekimlerde coin %1-2 üstünde kalır → %3 eşiği BEAR stay-flat'i tetikler.
+                    # Çözüm: coin EMA200 ÜZERİNDEYSE coin_own_bull=True (0% tolerans).
                     if coin_ema200 > 0:
-                        coin_above_ema200 = (price / coin_ema200 - 1) >= 0.03
+                        coin_above_ema200 = price >= coin_ema200
 
                 # Coinin kendi trend gücü (ADX)
                 coin_adx_strong = False
