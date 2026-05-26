@@ -626,10 +626,13 @@ class LiveEngine:
             max_pos = regime_params.max_positions
         self._check_entries(state, bar_ts, sym_ind, max_positions=max_pos)
 
-        # 6) Last bar timestamp'i güncelle
+        # 6) Coin benchmark güncelle (bot başlangıcından bu yana fiyat değişimi)
+        self._update_benchmarks(state, bar_ts, sym_ind)
+
+        # 7) Last bar timestamp'i güncelle
         state["last_bar_ts"] = bar_ts.isoformat()
 
-        # 7) State kaydet
+        # 8) State kaydet
         self.save_state(state)
 
         n_open   = len(state.get("open_positions", []))
@@ -640,6 +643,49 @@ class LiveEngine:
             f"Bakiye: ${balance:.2f} | Açık: {n_open} | Kapalı: {n_closed}"
         )
         return state
+
+    def _update_benchmarks(
+        self,
+        state: dict,
+        bar_ts: pd.Timestamp,
+        sym_ind: dict[str, pd.DataFrame],
+    ) -> None:
+        """
+        Bot başlatıldığından bu yana her coinin fiyat değişimini takip eder.
+        İlk çalışmada start_price kaydedilir, sonraki ticklerde current_price güncellenir.
+        """
+        existing: dict[str, dict] = {
+            b["symbol"]: b
+            for b in state.get("coin_benchmarks", [])
+        }
+        updated = []
+        now_iso = bar_ts.isoformat()
+
+        for sym, df in sym_ind.items():
+            if df.empty or bar_ts not in df.index:
+                continue
+            current_price = float(df.loc[bar_ts, "close"])
+            if current_price <= 0:
+                continue
+
+            if sym in existing:
+                bm = dict(existing[sym])
+                bm["current_price"] = current_price
+                start_px = bm.get("start_price", current_price)
+                bm["pct_change"] = ((current_price - start_px) / start_px * 100) if start_px > 0 else 0.0
+                bm["updated_at"] = now_iso
+            else:
+                bm = {
+                    "symbol":        sym,
+                    "start_price":   current_price,
+                    "current_price": current_price,
+                    "pct_change":    0.0,
+                    "start_date":    now_iso,
+                    "updated_at":    now_iso,
+                }
+            updated.append(bm)
+
+        state["coin_benchmarks"] = sorted(updated, key=lambda b: b["symbol"])
 
     def _get_regime_params(self, bar_ts, sym_ind):
         """Mevcut rejim parametrelerini döndürür (hata durumunda None)."""

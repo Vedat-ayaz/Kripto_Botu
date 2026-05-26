@@ -24,6 +24,20 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from dashboard.state import BotStateDB
 
+# UNIVERSE coin listesi — market ekranı için (ccxt kurulu olmasa da fallback)
+try:
+    from crypto_portfolio_test import UNIVERSE as _CRYPTO_UNIVERSE
+except Exception:
+    _CRYPTO_UNIVERSE = [
+        "BNB/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT",
+        "ADA/USDT", "DOGE/USDT", "AVAX/USDT", "TRX/USDT",
+        "DOT/USDT", "LINK/USDT", "LTC/USDT", "ATOM/USDT",
+        "NEAR/USDT", "UNI/USDT", "APT/USDT", "INJ/USDT",
+        "FET/USDT", "ARB/USDT", "OP/USDT", "ETC/USDT",
+        "HBAR/USDT", "ALGO/USDT", "VET/USDT", "FIL/USDT",
+        "SUI/USDT", "TIA/USDT", "TON/USDT", "JUP/USDT", "WIF/USDT",
+    ]
+
 
 st.set_page_config(
     page_title="Kripto Bot Mission Control",
@@ -957,25 +971,21 @@ def build_model_summary(name: str, state: dict[str, Any] | None) -> dict[str, An
 
 
 def build_watchlist(config: dict[str, Any], models: list[dict[str, Any]]) -> list[str]:
-    configured = list((config.get("trading") or {}).get("symbols") or [])
+    """
+    Tüm UNIVERSE coinleri + açık pozisyon coinleri döndürür.
+    Market ekranı ve price fetch için kullanılır.
+    BTC her zaman başa eklenir (rejim izleme + benchmark).
+    """
+    # Açık pozisyon/trade'lerden aktif coinler (öncelikli sıralamada)
     active: list[str] = []
-
     for model in models:
         state = model.get("state") or {}
-        active.extend(pos.get("symbol", "") for pos in state.get("open_positions", [])[:4])
-        active.extend(tr.get("symbol", "") for tr in state.get("closed_trades", [])[:6])
+        active.extend(pos.get("symbol", "") for pos in state.get("open_positions", []))
+        active.extend(tr.get("symbol", "") for tr in state.get("closed_trades", [])[:10])
 
-    defaults = [
-        "BTC/USDT",
-        "ETH/USDT",
-        "SOL/USDT",
-        "BNB/USDT",
-        "XRP/USDT",
-        "DOGE/USDT",
-        "AVAX/USDT",
-        "DOT/USDT",
-    ]
-    return dedupe(configured + active + defaults)[:12]
+    # BTC + UNIVERSE + aktif coinler (tekrarsız, sıralı)
+    full = dedupe(["BTC/USDT"] + _CRYPTO_UNIVERSE + active)
+    return full
 
 
 def market_breadth(market_rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1249,6 +1259,145 @@ def render_model_comparison_curve(m4: dict[str, Any], m5: dict[str, Any]) -> Non
     fig.update_xaxes(title="Kapanan islem sirasi")
     plot_layout(fig, height=360)
     st.plotly_chart(fig, use_container_width=True)
+
+
+def render_equity_timeline_with_trades(m4: dict[str, Any], m5: dict[str, Any]) -> None:
+    """
+    Equity eğrisi — x ekseni ZAMAN (saat bazlı), işlem noktaları üzerinde.
+    Yeşil nokta = kârlı işlem, kırmızı nokta = zararlı işlem.
+    Hover: coin adı, alış fiyatı, satış fiyatı, PnL.
+    """
+    fig = go.Figure()
+    rendered = False
+
+    for model, line_color in [(m4, PALETTE["primary"]), (m5, PALETTE["success"])]:
+        df = model.get("trade_df")
+        if df is None or df.empty:
+            continue
+        df = df.dropna(subset=["exit_dt"]).copy()
+        if df.empty:
+            continue
+
+        init_cap = model.get("initial_capital", 1000.0)
+
+        # Başlangıç noktası: başlangıç zamanı + init_cap
+        first_ts = df["exit_dt"].min()
+        x_vals = [first_ts - pd.Timedelta(minutes=1)] + list(df["exit_dt"])
+        y_vals = [init_cap] + list(df["equity"])
+
+        # Equity çizgisi
+        fig.add_trace(go.Scatter(
+            x=x_vals,
+            y=y_vals,
+            mode="lines",
+            name=model["name"],
+            line=dict(color=line_color, width=2.5),
+        ))
+
+        # İşlem noktaları
+        for is_win in [True, False]:
+            subset = df[df["pnl"] > 0] if is_win else df[df["pnl"] <= 0]
+            if subset.empty:
+                continue
+            marker_color  = PALETTE["success"] if is_win else PALETTE["danger"]
+            marker_symbol = "circle" if is_win else "circle"
+            marker_size   = 10 if is_win else 9
+
+            # Hover için customdata: [coin, giriş$, çıkış$, pnl$, alış_tarihi]
+            custom = list(zip(
+                subset["label"].tolist(),
+                subset["entry_price"].tolist(),
+                subset["exit_price"].tolist(),
+                subset["pnl"].tolist(),
+                subset["entry_date"].tolist(),
+            ))
+
+            fig.add_trace(go.Scatter(
+                x=subset["exit_dt"],
+                y=subset["equity"],
+                mode="markers",
+                name=f"{'Kâr' if is_win else 'Zarar'} ({model['name']})",
+                marker=dict(
+                    symbol=marker_symbol,
+                    size=marker_size,
+                    color=marker_color,
+                    line=dict(color="white", width=1.5),
+                    opacity=0.90,
+                ),
+                customdata=custom,
+                hovertemplate=(
+                    "<b>%{customdata[0]}</b><br>"
+                    "Alış: $%{customdata[1]:.4f}<br>"
+                    "Satış: $%{customdata[2]:.4f}<br>"
+                    "PnL: <b>$%{customdata[3]:+.2f}</b><br>"
+                    "Alış tarihi: %{customdata[4]}<br>"
+                    "Satış tarihi: %{x}<extra></extra>"
+                ),
+                showlegend=False,
+            ))
+        rendered = True
+
+    if not rendered:
+        st.info("Equity grafiği için kapanmış işlem verisi bekleniyor — bot bir işlemi kapattığında burada görünecek.")
+        return
+
+    fig.update_yaxes(tickprefix="$")
+    fig.update_xaxes(title="Zaman")
+    plot_layout(fig, height=400)
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def render_open_positions_allocation(
+    m4: dict[str, Any],
+    m5: dict[str, Any],
+    m6: dict[str, Any],
+) -> None:
+    """
+    Açık pozisyonlar: hangi coin, kaç dolar yatırıldı.
+    Sade kart formatı — model adı, coin adı, $ tutarı.
+    """
+    all_positions: list[dict] = []
+    for model in [m4, m5, m6]:
+        if not model.get("available"):
+            continue
+        for pos in model.get("open_positions", []):
+            cost  = safe_float(pos.get("cost", 0))
+            entry = safe_float(pos.get("entry_price", 0))
+            upnl  = safe_float(pos.get("unrealized_pnl", 0))
+            all_positions.append({
+                "model": model["name"],
+                "sym":   pos.get("symbol", ""),
+                "label": symbol_label(pos.get("symbol", "")),
+                "cost":  cost,
+                "entry": entry,
+                "upnl":  upnl,
+            })
+
+    if not all_positions:
+        st.markdown(
+            '<div class="panel-copy" style="padding:0.5rem 0">Şu an açık pozisyon yok.</div>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    # HTML badge satırı
+    badges = []
+    for p in all_positions:
+        upnl_color = PALETTE["success"] if p["upnl"] >= 0 else PALETTE["danger"]
+        upnl_sign  = "+" if p["upnl"] >= 0 else ""
+        badges.append(
+            f'<span class="badge badge-neutral" style="font-size:0.82rem">'
+            f'<b>{p["label"]}</b>&nbsp;'
+            f'<span style="color:{PALETTE["muted"]}">[{p["model"]}]</span>&nbsp;'
+            f'${p["cost"]:,.0f}'
+            f'&nbsp;<span style="color:{upnl_color}">{upnl_sign}${p["upnl"]:,.2f}</span>'
+            f'</span>'
+        )
+
+    st.markdown(
+        f'<div class="badge-row" style="margin:0.4rem 0 0.8rem">{"".join(badges)}</div>',
+        unsafe_allow_html=True,
+    )
 
 
 def render_market_breadth_chart(market_rows: list[dict[str, Any]]) -> None:
@@ -1540,18 +1689,26 @@ def render_overview_tab(
     snapshot: dict[str, Any],
     m4: dict[str, Any],
     m5: dict[str, Any],
+    m6: dict[str, Any],
     market_rows: list[dict[str, Any]],
     signal_map: dict[str, dict[str, Any]],
 ) -> None:
     render_section_header(
         "Tek Bakista Genel Durum",
-        "Basit bir ozet ve hemen altinda detayli karsilastirma var.",
+        "Equity eğrisi saate göre — işlem noktalarına fare ile git, detay gör.",
         f"M4 {m4.get('freshness', '—')} · M5 {m5.get('freshness', '—')}",
     )
 
+    # Açık pozisyon coin dağılımı (sade — coin adı + $ tutarı)
+    st.markdown(
+        '<div class="panel-title" style="margin-bottom:0.3rem">Açık Pozisyonlar</div>',
+        unsafe_allow_html=True,
+    )
+    render_open_positions_allocation(m4, m5, m6)
+
     left, right = st.columns([7, 5])
     with left:
-        render_model_comparison_curve(m4, m5)
+        render_equity_timeline_with_trades(m4, m5)
     with right:
         render_market_breadth_chart(market_rows)
 
@@ -1559,7 +1716,7 @@ def render_overview_tab(
         "Canli Piyasa Kartlari",
         "Takip ettigin coinleri hizli okumak icin sade kartlar.",
     )
-    render_market_cards(market_rows[:8], signal_map)
+    render_market_cards(market_rows[:12], signal_map)
 
     render_section_header(
         "M4 ve M5 Kisa Tablo",
@@ -1613,9 +1770,11 @@ def render_market_tab(
     exchange_name: str,
     watchlist: list[str],
 ) -> None:
+    n_coins = len(market_rows)
+    valid   = sum(1 for r in market_rows if not r.get("error") and r.get("last"))
     render_section_header(
         "Canli Piyasa Ekrani",
-        "Kart secimiyle grafiği degisen, daha TradingView hissi veren coin izleme alani.",
+        f"{valid}/{n_coins} coin fiyatı alındı · Karta tıkla → grafik aşağıda açılır.",
     )
     selected_symbol = ensure_market_selection(watchlist)
     render_market_cards(
@@ -2546,6 +2705,7 @@ def main() -> None:
                 snapshot=snapshot,
                 m4=m4,
                 m5=m5,
+                m6=m6,
                 market_rows=market_rows,
                 signal_map=signal_map,
             )
