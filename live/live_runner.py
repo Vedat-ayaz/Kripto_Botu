@@ -231,8 +231,9 @@ def run_once(cfg: dict) -> None:
         print(f"  ❌ M5 hata: {e}")
 
     # ── M6 ────────────────────────────────────────────────────────────────────
-    # 1m bar: 365 gün × 1440 bar/gün × 15 coin = 7.8M bar → AWS'de hang.
-    # days=14 ile: 14 × 1440 × 15 = 302,400 bar → yönetilebilir.
+    # 1m bar: 365 gün × 1440 bar/gün × 9 coin = 4.7M bar → AWS'de hang.
+    # days=7 ile: 7 × 1440 × 9 = 90,720 bar → hızlı (<5 dk).
+    # v19: Scalping için 7 gün yeterli — daha uzun geçmiş anlamsız (1m volatilite çok farklı).
     print("\n🟢 M6 çalışıyor (1m scalping)...")
     try:
         run_portfolio_backtest(
@@ -245,7 +246,7 @@ def run_once(cfg: dict) -> None:
             use_universe=False,   # 9 coin — 1m'de geniş universe gerekmiyor
             use_wfo=False,
             timeframe="1m",
-            days=14,              # 1m: sadece 14 gün (302K bar) — scalping için yeterli
+            days=7,               # v19: 14→7 gün (90K bar, ~3 dk) — scalping için yeterli
             json_out=M6_STATE,
         )
     except Exception as e:

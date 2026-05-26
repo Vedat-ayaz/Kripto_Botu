@@ -480,6 +480,17 @@ def make_strategy(symbol: str, wfo_params: Optional[dict] = None, coin_df: Optio
     strat_params = {k: v for k, v in p.items() if k in strat_keys}
     risk_params = {k: v for k, v in p.items() if k not in strat_keys}
 
+    # v19 FIX: 1m (M6 scalping) için strateji parametrelerini TF-aware yap.
+    # 1m barlarında varsayılan EMA50 = 50dk, EMA200 = 3.3h → çok kısa → filtreler hep tetikleniyor.
+    # Çözüm: M6'da slope_bars ve momentum_lookback'i 1h eşdeğerine ölçekle.
+    # slope_bars: 1h=20bar(20saat) → 1m=1200bar(20saat). Ama çok uzun → scalping için 60bar(1saat).
+    # momentum_lookback: 1h=720bar(30gün) → 1m=43200bar (çok büyük) → 1440bar(1gün) kullan.
+    # mtf_filter_enabled: 1m'de HTF=15min resample. Bu makul ama strict; M6'da devre dışı bırak.
+    if timeframe == "1m":
+        strat_params.setdefault("slope_bars", 60)          # 60×1min = 1 saatlik EMA eğimi
+        strat_params["momentum_lookback"] = 1440           # 1440×1min = 1 günlük momentum (eskisi 720→12h, çok kısa)
+        strat_params["mtf_filter_enabled"] = False         # 1m'de 15min HTF filtresi M6 girişlerini çok blokluyor
+
     inds = TechnicalIndicators()
     strategy = TrendFollowingStrategy(**strat_params, indicators=inds)
     return strategy, risk_params
