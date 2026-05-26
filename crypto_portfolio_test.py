@@ -1485,16 +1485,17 @@ def run_portfolio_backtest(
                         if not (last3["close"] > last3[ema_col]).all():
                             continue
 
-                    # LONG-specific (v11b): BEAR rejimde TAMAMEN STAY FLAT.
-                    # v9'da 4-katlı sıkı filtre, v10'da SHORT denendi → ikisi de başarısız (-%7 ila -%10).
-                    # Akademik: Liu et al. (arxiv 2209.05559), QuantInsti regime-adaptive trading.
-                    # BULL'a dönüşte M6 agresif modu devreye girer.
-                    # v11b: in_global_bear bar bazında değişiyor (smoke'da 12 trade engellendi),
-                    # daha sıkı kapsam için 3 paralel BEAR sinyalini OR'la:
-                    #   - in_global_bear (regime_ctrl entry boost ≥ 0.07)
-                    #   - in_strong_bear (regime_ctrl entry boost ≥ 0.20)
-                    #   - _btc_m1_active False (BTC EMA200 altında — global rejim teyidi)
-                    if in_global_bear or in_strong_bear or (not _btc_m1_active):
+                    # LONG-specific (v16): BEAR rejimde akıllı stay-flat.
+                    # v11b sadece BEAR=stay-flat yapıyordu ama coin_own_bull'u görmezden geliyordu.
+                    # Bu tutarsızlık: satır 1334'te coin_own_bull → kısıtla gevşet deniyor,
+                    # ama burada coin_own_bull olsa bile bloklanıyordu → 0 trade.
+                    #
+                    # v16 kuralı:
+                    #   STRONG_BEAR → tüm coinleri blokla (piyasa çöküyor)
+                    #   BEAR + coin kendi EMA200 ALTINDA → blokla (hem global hem coin bearish)
+                    #   BEAR + coin kendi EMA200 ÜSTÜNDE → izin ver (coin güçlü, global bear geçici)
+                    #   NEUTRAL/BULL → serbest
+                    if in_strong_bear or (in_global_bear and not coin_own_bull):
                         continue
 
                 else:
