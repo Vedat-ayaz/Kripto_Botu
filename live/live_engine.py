@@ -384,7 +384,10 @@ class LiveEngine:
         in_global_bull  = False
         if regime_params:
             in_global_bear = regime_params.entry_score_boost >= 0.07
-            in_strong_bear = regime_params.entry_score_boost >= 0.20
+            # M6 (1m scalping): 1m data gürültülü → STRONG_BEAR eşiği daha yüksek tutulur
+            # 15m/1h için 0.20 yeterli; 1m için 0.20 çok sık tetiklenir → 0.20 (STRONG_BEAR) korunur
+            # ama M6'da bear rejimde SHORT sinyalleri de değerlendirilir (normal: sadece bear+coin_bull)
+            in_strong_bear = regime_params.entry_score_boost >= 0.20 and not self.m6_mode
             in_global_bull  = regime_params.entry_score_boost <= -0.03
 
         # Coin max kayıp eşiği
@@ -451,13 +454,16 @@ class LiveEngine:
                 continue
 
             # ── EMA50 onayı ───────────────────────────────────────────────
+            # M6 (1m): son 2 bar yeterli (3 bar çok strict, 1m'de oscillasyon fazla)
+            # M4/M5 (15m): son 3 bar (daha az gürültü, güçlü onay gerekli)
+            ema50_confirm_bars = 2 if self.m6_mode else 3
             ema50_col = next(
                 (c for c in ("ema_50", "ema50", "ema_fast") if c in slice_df.columns), None
             )
             if not is_short_signal:
-                if ema50_col and len(slice_df) >= 3:
-                    last3 = slice_df.tail(3)
-                    if not (last3["close"] > last3[ema50_col]).all():
+                if ema50_col and len(slice_df) >= ema50_confirm_bars:
+                    last_n = slice_df.tail(ema50_confirm_bars)
+                    if not (last_n["close"] > last_n[ema50_col]).all():
                         continue
             else:
                 if ema50_col and len(slice_df) >= 2:
@@ -531,8 +537,13 @@ class LiveEngine:
                 continue
 
             # Min hold bars (TF-aware)
-            hold_scale = self._bpd / 24
-            min_hold   = int((12 if coin_own_bull else 6) * hold_scale)
+            # M6 (1m scalping): 12 bar = 12 dk / 6 bar = 6 dk — scalping'e uygun
+            # M4/M5 (15m swing): hold_scale ile saatlerce tutma
+            if self.m6_mode:
+                min_hold = 12 if coin_own_bull else 6   # 1m bar = dakika cinsinden
+            else:
+                hold_scale = self._bpd / 24
+                min_hold   = int((12 if coin_own_bull else 6) * hold_scale)
 
             balance -= total_cost
 
