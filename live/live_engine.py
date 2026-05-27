@@ -63,7 +63,8 @@ logger = logging.getLogger(__name__)
 # Warmup gün sayısı: indikatörlerin oturması için çekilecek tarihsel veri
 WARMUP_DAYS = {
     "1m":  2,    # 2 gün × 1440 bar = 2880 bar
-    "15m": 7,    # 7 gün × 96 bar = 672 bar (EMA200 için yeterli)
+    "5m":  3,    # 3 gün × 288 bar = 864 bar (EMA200 için yeterli)
+    "15m": 7,    # 7 gün × 96 bar = 672 bar
     "1h":  14,   # 14 gün × 24 bar = 336 bar
 }
 

@@ -239,13 +239,13 @@ def run_once(cfg: dict) -> None:
         print(f"  ❌ M5 hata: {e}")
         logger.exception("M5 tick hata")
 
-    # ── M6 (1m, 9 coin scalping) ──────────────────────────────────────────────
-    print("\n🟢 M6 tick (1m, SYMBOLS)...")
+    # ── M6 (5m, 9 coin hızlı swing) ──────────────────────────────────────────
+    print("\n🟢 M6 tick (5m, SYMBOLS)...")
     try:
         engine_m6 = LiveEngine(
             mode="M6",
             symbols=SYMBOLS,
-            timeframe="1m",
+            timeframe="5m",
             capital=capital,
             state_file=M6_STATE,
             m6_mode=True,

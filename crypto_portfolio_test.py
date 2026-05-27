@@ -493,16 +493,29 @@ def make_strategy(symbol: str, wfo_params: Optional[dict] = None, coin_df: Optio
     # momentum_lookback: 1h=720bar(30gün) → 1m=43200bar (çok büyük) → 1440bar(1gün) kullan.
     # mtf_filter_enabled: 1m'de HTF=15min resample. Bu makul ama strict; M6'da devre dışı bırak.
     if timeframe == "1m":
-        strat_params.setdefault("slope_bars", 60)          # 60×1min = 1 saatlik EMA eğimi
-        strat_params["momentum_lookback"] = 1440           # 1440×1min = 1 günlük momentum
-        strat_params["mtf_filter_enabled"] = False         # 1m'de 15min HTF filtresi M6 girişlerini çok blokluyor
-        strat_params["min_atr_ratio"] = 0.0002             # 1m ATR çok küçük: 0.002 → 0.0002
-        strat_params["short_ema_pct"] = 0.9995             # 1m SHORT tetik: EMA200'ün hemen altı yeterli (1h: %1.5)
-        strat_params["short_momentum_lookback"] = 1440    # 1m: 1 günlük momentum (1h default: 336=14gün)
-        strat_params["short_mom_pct"] = 1.001              # 1m: sadece fiyat yükseliyorsa engelle (1h: %3 düşüş)
-        strat_params["short_score_trend_thr"] = 0.28     # 1m SHORT score eşiği (1h: 0.38)
-        strat_params["short_score_range_thr"] = 0.26     # 1m SHORT score eşiği ranging (1h: 0.34)
-        strat_params["short_require_ema_slope"] = False  # 1m: EMA slope şartı yok (ranging'de flat olur)
+        strat_params.setdefault("slope_bars", 60)
+        strat_params["momentum_lookback"] = 1440
+        strat_params["mtf_filter_enabled"] = False
+        strat_params["min_atr_ratio"] = 0.0002
+        strat_params["short_ema_pct"] = 0.9995
+        strat_params["short_momentum_lookback"] = 1440
+        strat_params["short_mom_pct"] = 1.001
+        strat_params["short_score_trend_thr"] = 0.28
+        strat_params["short_score_range_thr"] = 0.26
+        strat_params["short_require_ema_slope"] = False
+
+    if timeframe == "5m":
+        # 5m: M6 hızlı swing — 1m'den daha güvenilir, 15m'den daha hızlı
+        strat_params.setdefault("slope_bars", 24)          # 24×5min = 2 saatlik EMA eğimi
+        strat_params["momentum_lookback"] = 2016           # 2016×5min = 7 günlük momentum (288bar/gün × 7)
+        strat_params["mtf_filter_enabled"] = False         # 5m'de HTF filtresi aşırı blokluyor
+        strat_params["min_atr_ratio"] = 0.0008             # 5m ATR: 0.002 → 0.0008
+        strat_params["short_ema_pct"] = 0.998              # SHORT tetik: %0.2 altı yeterli
+        strat_params["short_momentum_lookback"] = 288      # 5m: 1 günlük momentum (288 bar)
+        strat_params["short_mom_pct"] = 1.001              # sadece yükseliyorsa engelle
+        strat_params["short_score_trend_thr"] = 0.30      # 5m SHORT score eşiği
+        strat_params["short_score_range_thr"] = 0.27      # 5m SHORT score ranging
+        strat_params["short_require_ema_slope"] = False    # ranging'de slope şartı yok
 
     inds = TechnicalIndicators()
     strategy = TrendFollowingStrategy(**strat_params, indicators=inds)
