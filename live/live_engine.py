@@ -426,7 +426,15 @@ class LiveEngine:
             if in_strong_bear:
                 continue  # STRONG BEAR: hiç giriş yok
             if in_global_bear and not coin_own_bull:
-                continue  # BEAR + coin EMA200 altında: giriş yok
+                # M5: bear + coin kendi bull değil → SHORT kabul (M5 daha agresif)
+                if not self.m5_mode or not is_short_signal:
+                    continue
+            # M4: bear'de ekstra ADX filtresi — sadece güçlü trend sinyali
+            # M4 konservatif: bear'de coin bull olsa bile ADX < 25 → giriş yok
+            if self.m4_mode and in_global_bear and coin_own_bull:
+                adx_now = float(row.get("adx", 0))
+                if adx_now < 25:
+                    continue
 
             # ── 30 günlük kayan kayıp limiti ─────────────────────────────
             sym_trades_30d = [
@@ -481,6 +489,17 @@ class LiveEngine:
             risk_pct    = risk_params.get("risk_per_trade", RISK_PER_TRADE)
             atr_stop    = risk_params.get("atr_stop_multiplier", ATR_STOP_MULT)
             max_pos_pct = risk_params.get("max_position_pct", MAX_POSITION_PCT)
+
+            # M5: M4'e göre daha agresif pozisyon boyutu (backtest farkını live'a taşı)
+            # M4: konservatif (defansif), M5: agresif (momentum odaklı, büyük upside)
+            if self.m5_mode:
+                risk_pct    *= 1.25   # %25 daha büyük risk
+                max_pos_pct *= 1.30   # %30 daha geniş pozisyon limiti
+
+            # M6 (scalping): daha küçük pozisyonlar, hızlı dönüş
+            if self.m6_mode:
+                risk_pct    *= 0.80   # %20 daha küçük risk (scalping)
+                max_pos_pct = min(max_pos_pct, 0.15)  # max %15 per pozisyon
 
             # Rejim boyut çarpanı
             pos_mult = 1.0
