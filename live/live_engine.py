@@ -75,15 +75,16 @@ class LivePosition:
     entry_price: float
     stop_price: float
     trail_price: float
-    size: float            # coin adedi
-    cost: float            # nakit bloke ($)
-    entry_date: str        # ISO timestamp
+    size: float             # coin adedi
+    cost: float             # pozisyon değeri $ (dashboard gösterimi: entry_price × size)
+    entry_date: str         # ISO timestamp
     entry_atr: float
     trailing_mult: float
     is_short: bool = False
     coin_own_bull: bool = False
     bars_held: int = 0
     min_hold_bars: int = 6
+    margin_locked: float = 0.0  # SHORT: bakiyeden düşülen gerçek margin (= atr_stop×atr×size + comm)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -277,6 +278,12 @@ class LiveEngine:
                     trail_px = new_trail
                     pos_d["trail_price"] = trail_px
 
+            # ── Unrealized PnL her bar güncellenir (min_hold'dan bağımsız) ──
+            if not is_short:
+                pos_d["unrealized_pnl"] = (price - float(pos_d["entry_price"])) * float(pos_d["size"])
+            else:
+                pos_d["unrealized_pnl"] = (float(pos_d["entry_price"]) - price) * float(pos_d["size"])
+
             # ── Min hold süresi dolmadıysa stop kontrol etme ─────────────
             if pos_d["bars_held"] < min_hold:
                 still_open.append(pos_d)
@@ -313,14 +320,14 @@ class LiveEngine:
                     pnl    = gross - comm
                     balance += fill * size - comm
                 else:
-                    # SHORT: açılışta sadece margin rezervi (pos_d["cost"]) düşüldü.
+                    # SHORT: açılışta margin_locked kadar düşülmüştü.
                     # Kapanışta: margin iade + net kâr/zarar.
-                    # entry_price*size KULLANILMAZ — o hiç düşülmemişti (bakiye şişmesini önler).
-                    fill   = exit_price * (1 + SLIPPAGE)
-                    comm   = fill * size * COMMISSION
-                    gross  = (float(pos_d["entry_price"]) - fill) * size
-                    pnl    = gross - comm
-                    balance += float(pos_d["cost"]) + pnl  # margin iade + kâr/zarar
+                    fill          = exit_price * (1 + SLIPPAGE)
+                    comm          = fill * size * COMMISSION
+                    gross         = (float(pos_d["entry_price"]) - fill) * size
+                    pnl           = gross - comm
+                    margin_locked = float(pos_d.get("margin_locked", pos_d.get("cost", 0)))
+                    balance      += margin_locked + pnl   # margin iade + kâr/zarar
 
                 state["closed_trades"].append({
                     "symbol":       sym,
@@ -548,15 +555,19 @@ class LiveEngine:
 
             # Giriş fiyatı (slippage dahil)
             if is_short_signal:
-                fill_price = price * (1 - SLIPPAGE)
-                comm       = fill_price * size * COMMISSION
-                total_cost = atr_stop * atr * size + comm   # marjin rezervi
-                trail_px   = fill_price + trail_mult * atr
+                fill_price    = price * (1 - SLIPPAGE)
+                comm          = fill_price * size * COMMISSION
+                margin_locked = atr_stop * atr * size + comm   # bakiyeden düşülen miktar
+                total_cost    = margin_locked
+                # position_value: dashboard'da gösterilecek gerçek pozisyon büyüklüğü
+                position_value = fill_price * size
+                trail_px      = fill_price + trail_mult * atr
             else:
-                fill_price = price * (1 + SLIPPAGE)
-                comm       = fill_price * size * COMMISSION
-                total_cost = fill_price * size + comm
-                trail_px   = fill_price - trail_mult * atr
+                fill_price     = price * (1 + SLIPPAGE)
+                comm           = fill_price * size * COMMISSION
+                total_cost     = fill_price * size + comm
+                position_value = total_cost
+                trail_px       = fill_price - trail_mult * atr
 
             if total_cost > balance:
                 continue
@@ -573,18 +584,19 @@ class LiveEngine:
             balance -= total_cost
 
             pos = LivePosition(
-                symbol        = sym,
-                entry_price   = float(fill_price),
-                stop_price    = float(price + atr_stop * atr if is_short_signal else price - atr_stop * atr),
-                trail_price   = float(trail_px),
-                size          = float(size),
-                cost          = float(total_cost),
-                entry_date    = bar_ts.isoformat(),
-                entry_atr     = float(atr),
-                trailing_mult = float(trail_mult),
-                is_short      = is_short_signal,
-                coin_own_bull = coin_own_bull,
-                min_hold_bars = min_hold,
+                symbol         = sym,
+                entry_price    = float(fill_price),
+                stop_price     = float(price + atr_stop * atr if is_short_signal else price - atr_stop * atr),
+                trail_price    = float(trail_px),
+                size           = float(size),
+                cost           = float(position_value),     # dashboard: entry_price × size
+                margin_locked  = float(total_cost),         # SHORT: bakiyeden düşülen gerçek miktar
+                entry_date     = bar_ts.isoformat(),
+                entry_atr      = float(atr),
+                trailing_mult  = float(trail_mult),
+                is_short       = is_short_signal,
+                coin_own_bull  = coin_own_bull,
+                min_hold_bars  = min_hold,
             )
             state["open_positions"].append(pos.to_dict())
             open_syms.add(sym)
