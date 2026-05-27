@@ -73,6 +73,10 @@ class TrendFollowingStrategy:
         # 1h: trending>0.6, ranging<0.35; daily: 0.40/0.20 daha uygun
         regime_trending_threshold: float = 0.60,
         regime_ranging_threshold: float = 0.35,
+        # SHORT tetik eşiği: close < EMA200 * short_ema_pct
+        # 1h/15m: 0.985 (EMA200'ün %1.5 altı)
+        # 1m scalping: 0.9995 (hemen altı yeterli)
+        short_ema_pct: float = 0.985,
         indicators: Optional[TechnicalIndicators] = None,
     ):
         self.rsi_lower             = rsi_lower
@@ -95,6 +99,7 @@ class TrendFollowingStrategy:
         self._regime_ranging_threshold    = regime_ranging_threshold
         self.choppiness_enabled   = choppiness_enabled
         self.mtf_filter_enabled   = mtf_filter_enabled
+        self.short_ema_pct        = short_ema_pct
         self.indicators            = indicators or TechnicalIndicators()
         self._last_logged_bar: dict[str, str] = {}
 
@@ -190,7 +195,7 @@ class TrendFollowingStrategy:
         # LONG-spesifik filtreler (rolling WR, momentum, EMA slope) SHORT'u engellemesin.
         # Bear piyasada bu filtreler ZATEN tetiklenir ve SHORT fırsatı kaçırılır.
         # Bu blok LONG filtrelerinden ÖNCE çalışır → bağımsız SHORT değerlendirmesi.
-        if allow_short and close < ema_slow * 0.985:   # coin EMA200'ün en az %1.5 altında
+        if allow_short and close < ema_slow * self.short_ema_pct:   # SHORT tetik eşiği (1m: 0.9995, 1h: 0.985)
             # RSI aşırı satım kontrolü: fiyat zaten dipteyse SHORT kapama yakın (sekme riski)
             # EMA50 eğimi aşağı mı?
             _ema_slope_down = False
