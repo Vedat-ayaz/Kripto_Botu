@@ -80,6 +80,13 @@ class TrendFollowingStrategy:
         # SHORT momentum lookback: kaç bar öncesiyle kıyasla
         # 1h: 336 bar = 14 gün | 1m: 1440 bar = 1 gün (kısa TF'te daha reaktif)
         short_momentum_lookback: int = 336,
+        # SHORT momentum: fiyat N bar önceye göre en az ne kadar düşmüş olmalı
+        # 1h: 0.97 (%3 düşüş) | 1m scalping: 0.998 (%0.2 yeterli)
+        short_mom_pct: float = 0.97,
+        # SHORT score eşiği (priority block için)
+        # 1h: 0.38/0.34 | 1m: 0.28/0.26 (daha gevşek)
+        short_score_trend_thr: float = 0.38,
+        short_score_range_thr: float = 0.34,
         indicators: Optional[TechnicalIndicators] = None,
     ):
         self.rsi_lower             = rsi_lower
@@ -104,6 +111,9 @@ class TrendFollowingStrategy:
         self.mtf_filter_enabled        = mtf_filter_enabled
         self.short_ema_pct             = short_ema_pct
         self.short_momentum_lookback   = short_momentum_lookback
+        self.short_mom_pct             = short_mom_pct
+        self.short_score_trend_thr     = short_score_trend_thr
+        self.short_score_range_thr     = short_score_range_thr
         self.indicators            = indicators or TechnicalIndicators()
         self._last_logged_bar: dict[str, str] = {}
 
@@ -214,8 +224,8 @@ class TrendFollowingStrategy:
             _short_lb = self.short_momentum_lookback
             if len(df) >= _short_lb:
                 _p14 = df["close"].iloc[-_short_lb]
-                if not pd.isna(_p14) and close >= float(_p14) * 0.97:
-                    _short_mom_ok = False  # 14g momentum flat/pozitif → düşüş trendi yok → SHORT engel
+                if not pd.isna(_p14) and close >= float(_p14) * self.short_mom_pct:
+                    _short_mom_ok = False  # momentum flat/pozitif → düşüş trendi yok → SHORT engel
 
             # rsi >= 32: aşırı satımda değil (sekme riski düşük)
             if rsi >= 32 and _ema_slope_down and _short_mom_ok:
@@ -229,10 +239,10 @@ class TrendFollowingStrategy:
                 if self._btc_is_bull:
                     _short_thresh = 0.62   # boğa rejimde yüksek bar
                 else:
-                    _short_thresh = 0.38 if is_trending else 0.34
+                    _short_thresh = self.short_score_trend_thr if is_trending else self.short_score_range_thr
                     if adx >= 30:
-                        _short_thresh = max(_short_thresh - 0.04, 0.26)
-                    _short_thresh = max(_short_thresh - 0.02, 0.24)  # bear global → daha kolay SHORT
+                        _short_thresh = max(_short_thresh - 0.04, 0.20)
+                    _short_thresh = max(_short_thresh - 0.02, 0.20)  # bear global → daha kolay SHORT
 
                 if _short_score >= _short_thresh:
                     logger.info(

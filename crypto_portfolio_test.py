@@ -499,6 +499,9 @@ def make_strategy(symbol: str, wfo_params: Optional[dict] = None, coin_df: Optio
         strat_params["min_atr_ratio"] = 0.0002             # 1m ATR çok küçük: 0.002 → 0.0002
         strat_params["short_ema_pct"] = 0.9995             # 1m SHORT tetik: EMA200'ün hemen altı yeterli (1h: %1.5)
         strat_params["short_momentum_lookback"] = 1440    # 1m: 1 günlük momentum (1h default: 336=14gün)
+        strat_params["short_mom_pct"] = 0.998              # 1m: %0.2 düşüş yeterli (1h: %3)
+        strat_params["short_score_trend_thr"] = 0.28      # 1m SHORT score eşiği (1h: 0.38)
+        strat_params["short_score_range_thr"] = 0.26      # 1m SHORT score eşiği ranging (1h: 0.34)
 
     inds = TechnicalIndicators()
     strategy = TrendFollowingStrategy(**strat_params, indicators=inds)
