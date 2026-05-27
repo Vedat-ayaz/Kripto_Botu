@@ -426,20 +426,6 @@ class LiveEngine:
                 if ema200 > 0:
                     coin_own_bull = price >= ema200
 
-            # ── Bear rejim filtresi ───────────────────────────────────────
-            if in_strong_bear:
-                continue  # STRONG BEAR: hiç giriş yok
-            if in_global_bear and not coin_own_bull:
-                # M5: bear + coin kendi bull değil → SHORT kabul (M5 daha agresif)
-                if not self.m5_mode or not is_short_signal:
-                    continue
-            # M4: bear'de ekstra ADX filtresi — sadece güçlü trend sinyali
-            # M4 konservatif: bear'de coin bull olsa bile ADX < 25 → giriş yok
-            if self.m4_mode and in_global_bear and coin_own_bull:
-                adx_now = float(row.get("adx", 0))
-                if adx_now < 25:
-                    continue
-
             # ── 30 günlük kayan kayıp limiti ─────────────────────────────
             sym_trades_30d = [
                 t for t in closed_trades
@@ -451,7 +437,7 @@ class LiveEngine:
             if rolling_pnl_30d < -coin_max_loss:
                 continue
 
-            # ── Strateji sinyali ──────────────────────────────────────────
+            # ── Strateji sinyali (bear filtreden ÖNCE üretilir) ───────────
             try:
                 strategy, risk_params = make_strategy(
                     sym, coin_df=slice_df, timeframe=self.timeframe
@@ -465,9 +451,25 @@ class LiveEngine:
             if signal.side not in (Side.BUY, Side.SHORT):
                 continue
 
+            # ── Bear rejim filtresi (sinyal türü artık biliniyor) ─────────
+            if in_strong_bear:
+                continue  # STRONG BEAR: hiç giriş yok
+
+            if in_global_bear and not coin_own_bull:
+                # LONG sinyali + coin bear → engel
+                if not is_short_signal:
+                    continue
+                # SHORT sinyali + BEAR: M4 bloklar, M5/M6 geçer
+                if self.m4_mode:
+                    continue
+
+            # M4: bear'de coin bull olsa bile ADX < 25 → giriş yok (konservatif)
+            if self.m4_mode and in_global_bear and coin_own_bull:
+                if float(row.get("adx", 0)) < 25:
+                    continue
+
             # ── EMA50 onayı ───────────────────────────────────────────────
-            # M6 (1m): son 2 bar yeterli (3 bar çok strict, 1m'de oscillasyon fazla)
-            # M4/M5 (15m): son 3 bar (daha az gürültü, güçlü onay gerekli)
+            # M6 (1m): son 2 bar yeterli; M4/M5 (15m): son 3 bar
             ema50_confirm_bars = 2 if self.m6_mode else 3
             ema50_col = next(
                 (c for c in ("ema_50", "ema50", "ema_fast") if c in slice_df.columns), None
