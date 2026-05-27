@@ -306,17 +306,21 @@ class LiveEngine:
                 # PnL hesapla
                 size = float(pos_d["size"])
                 if not is_short:
+                    # LONG: çıkışta fill * size nakit geri gelir, komisyon düşülür
                     fill   = exit_price * (1 - SLIPPAGE)
                     comm   = fill * size * COMMISSION
                     gross  = (fill - float(pos_d["entry_price"])) * size
                     pnl    = gross - comm
                     balance += fill * size - comm
                 else:
+                    # SHORT: açılışta sadece margin rezervi (pos_d["cost"]) düşüldü.
+                    # Kapanışta: margin iade + net kâr/zarar.
+                    # entry_price*size KULLANILMAZ — o hiç düşülmemişti (bakiye şişmesini önler).
                     fill   = exit_price * (1 + SLIPPAGE)
                     comm   = fill * size * COMMISSION
                     gross  = (float(pos_d["entry_price"]) - fill) * size
                     pnl    = gross - comm
-                    balance += float(pos_d["entry_price"]) * size + pnl  # margin geri + kâr/zarar
+                    balance += float(pos_d["cost"]) + pnl  # margin iade + kâr/zarar
 
                 state["closed_trades"].append({
                     "symbol":       sym,
