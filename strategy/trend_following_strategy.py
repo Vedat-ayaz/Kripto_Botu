@@ -77,6 +77,9 @@ class TrendFollowingStrategy:
         # 1h/15m: 0.985 (EMA200'ün %1.5 altı)
         # 1m scalping: 0.9995 (hemen altı yeterli)
         short_ema_pct: float = 0.985,
+        # SHORT momentum lookback: kaç bar öncesiyle kıyasla
+        # 1h: 336 bar = 14 gün | 1m: 1440 bar = 1 gün (kısa TF'te daha reaktif)
+        short_momentum_lookback: int = 336,
         indicators: Optional[TechnicalIndicators] = None,
     ):
         self.rsi_lower             = rsi_lower
@@ -97,9 +100,10 @@ class TrendFollowingStrategy:
         self._adx_boost                   = adx_boost
         self._regime_trending_threshold   = regime_trending_threshold
         self._regime_ranging_threshold    = regime_ranging_threshold
-        self.choppiness_enabled   = choppiness_enabled
-        self.mtf_filter_enabled   = mtf_filter_enabled
-        self.short_ema_pct        = short_ema_pct
+        self.choppiness_enabled        = choppiness_enabled
+        self.mtf_filter_enabled        = mtf_filter_enabled
+        self.short_ema_pct             = short_ema_pct
+        self.short_momentum_lookback   = short_momentum_lookback
         self.indicators            = indicators or TechnicalIndicators()
         self._last_logged_bar: dict[str, str] = {}
 
@@ -204,11 +208,10 @@ class TrendFollowingStrategy:
                 _ema_prev = df[_ema_fc].iloc[-(self._slope_bars + 1)] if _ema_fc in df.columns else float('nan')
                 _ema_slope_down = (not pd.isna(_ema_prev)) and ema_fast < float(_ema_prev)
 
-            # 14-günlük momentum: coin gerçekten düşüyor mu?
-            # 30g lookback çok uzun: 2 haftalık düşüşü kaçırır (ETH Jan örneği).
-            # 14g (336h) daha reaktif ve kısa trendi doğru yakalar.
+            # Momentum kontrolü: coin gerçekten düşüyor mu?
+            # 1h: 336 bar = 14 gün | 1m: 1440 bar = 1 gün
             _short_mom_ok = True
-            _short_lb = 14 * 24  # 336 bar = 14 gün (1h bar)
+            _short_lb = self.short_momentum_lookback
             if len(df) >= _short_lb:
                 _p14 = df["close"].iloc[-_short_lb]
                 if not pd.isna(_p14) and close >= float(_p14) * 0.97:

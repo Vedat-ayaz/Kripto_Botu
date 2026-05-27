@@ -498,6 +498,7 @@ def make_strategy(symbol: str, wfo_params: Optional[dict] = None, coin_df: Optio
         strat_params["mtf_filter_enabled"] = False         # 1m'de 15min HTF filtresi M6 girişlerini çok blokluyor
         strat_params["min_atr_ratio"] = 0.0002             # 1m ATR çok küçük: 0.002 → 0.0002
         strat_params["short_ema_pct"] = 0.9995             # 1m SHORT tetik: EMA200'ün hemen altı yeterli (1h: %1.5)
+        strat_params["short_momentum_lookback"] = 1440    # 1m: 1 günlük momentum (1h default: 336=14gün)
 
     inds = TechnicalIndicators()
     strategy = TrendFollowingStrategy(**strat_params, indicators=inds)
