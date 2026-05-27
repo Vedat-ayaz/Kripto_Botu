@@ -81,12 +81,15 @@ class TrendFollowingStrategy:
         # 1h: 336 bar = 14 gün | 1m: 1440 bar = 1 gün (kısa TF'te daha reaktif)
         short_momentum_lookback: int = 336,
         # SHORT momentum: fiyat N bar önceye göre en az ne kadar düşmüş olmalı
-        # 1h: 0.97 (%3 düşüş) | 1m scalping: 0.998 (%0.2 yeterli)
+        # 1h: 0.97 (%3 düşüş zorunlu) | 1m: 1.001 (sadece fiyat yükseliyorsa engelle)
         short_mom_pct: float = 0.97,
         # SHORT score eşiği (priority block için)
         # 1h: 0.38/0.34 | 1m: 0.28/0.26 (daha gevşek)
         short_score_trend_thr: float = 0.38,
         short_score_range_thr: float = 0.34,
+        # SHORT için EMA slope gereksin mi?
+        # 1h: True (EMA50 düşüyor olmalı) | 1m: False (ranging'de slope flat olur)
+        short_require_ema_slope: bool = True,
         indicators: Optional[TechnicalIndicators] = None,
     ):
         self.rsi_lower             = rsi_lower
@@ -114,6 +117,7 @@ class TrendFollowingStrategy:
         self.short_mom_pct             = short_mom_pct
         self.short_score_trend_thr     = short_score_trend_thr
         self.short_score_range_thr     = short_score_range_thr
+        self.short_require_ema_slope   = short_require_ema_slope
         self.indicators            = indicators or TechnicalIndicators()
         self._last_logged_bar: dict[str, str] = {}
 
@@ -228,7 +232,9 @@ class TrendFollowingStrategy:
                     _short_mom_ok = False  # momentum flat/pozitif → düşüş trendi yok → SHORT engel
 
             # rsi >= 32: aşırı satımda değil (sekme riski düşük)
-            if rsi >= 32 and _ema_slope_down and _short_mom_ok:
+            # short_require_ema_slope=False ise 1m scalping'de slope şartı aranmaz
+            _slope_ok = (not self.short_require_ema_slope) or _ema_slope_down
+            if rsi >= 32 and _slope_ok and _short_mom_ok:
                 _short_score, _short_detail = self._composite_score_short(
                     close, ema_fast, ema_slow, rsi, adx, macd, macd_hist,
                     bb_pct_b, bb_width, stoch_k, volume, volume_sma,
