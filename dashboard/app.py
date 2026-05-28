@@ -1886,24 +1886,32 @@ def render_model_summary_card(model: dict[str, Any], accent: str, subtitle: str)
     state       = model.get("state") or {}
     free_cash   = safe_float(state.get("balance"))
     open_pos    = state.get("open_positions", []) or []
-    margin_bloke  = 0.0   # gerçekten bloke edilen (LONG: harcanan, SHORT: margin)
-    notional_acik = 0.0   # toplam pozisyon büyüklüğü (açıklama için)
+    long_cost   = 0.0   # LONG: tam maliyet (fill_price × size)
+    short_mrgn  = 0.0   # SHORT: sadece marjin (risk miktarı)
+    n_long = n_short = 0
     for p in open_pos:
         ep   = safe_float(p.get("entry_price"))
         size = safe_float(p.get("size"))
-        notional_acik += ep * size
         if p.get("is_short", False):
+            n_short += 1
             margin = safe_float(p.get("margin_locked", 0))
             if margin < 0.01:
-                # Eski pozisyon: margin_locked kaydedilmemiş → stop_price'tan tahmin et
                 stop  = safe_float(p.get("stop_price", 0))
                 trail = safe_float(p.get("trail_price", 0))
-                ref   = max(stop, trail)          # SHORT'ta stop entry'nin üzerinde
+                ref   = max(stop, trail)
                 margin = abs(ref - ep) * size if ref > ep else ep * size * 0.02
-            margin_bloke += margin
+            short_mrgn += margin
         else:
+            n_long += 1
             cost = safe_float(p.get("cost", 0))
-            margin_bloke += cost if cost > 1.0 else ep * size
+            long_cost += cost if cost > 1.0 else ep * size
+
+    # Pozisyon satırını oluştur
+    pos_parts = []
+    if n_long  > 0: pos_parts.append(f"📈 LONG: {format_money(long_cost)}")
+    if n_short > 0: pos_parts.append(f"📉 SHORT marjin: {format_money(short_mrgn)}")
+    if not pos_parts:   pos_parts.append("Pozisyon yok")
+    pos_line = " &nbsp;|&nbsp; ".join(pos_parts)
 
     st.markdown(
         f"""
@@ -1917,9 +1925,7 @@ def render_model_summary_card(model: dict[str, Any], accent: str, subtitle: str)
             PF {pf_text}
           </div>
           <div class="panel-copy" style="margin-top:0.4rem; font-size:0.82rem; color:#6b7280;">
-            💰 Nakit: {format_money(free_cash)} &nbsp;|&nbsp;
-            📦 Yatırılan: {format_money(margin_bloke)} &nbsp;|&nbsp;
-            🔗 Notional: {format_money(notional_acik)}
+            💰 Serbest nakit: {format_money(free_cash)} &nbsp;|&nbsp; {pos_line}
           </div>
           <div class="badge-row" style="margin-top:0.8rem">
             <span class="badge badge-neutral">{model["trade_count"]} islem</span>
