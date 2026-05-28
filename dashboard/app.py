@@ -875,7 +875,8 @@ def prepare_state_trades(trades: list[dict[str, Any]]) -> pd.DataFrame:
             {
                 "symbol": trade.get("symbol", ""),
                 "label": symbol_label(trade.get("symbol", "")),
-                "side": trade.get("side", ""),
+                # is_short → SHORT/LONG etiketi
+                "side": ("SHORT" if trade.get("is_short") else "LONG") if "is_short" in trade else trade.get("side", ""),
                 "entry_date": trade.get("entry_date", ""),
                 "exit_date": trade.get("exit_date", ""),
                 "entry_price": safe_float(trade.get("entry_price")),
@@ -884,6 +885,7 @@ def prepare_state_trades(trades: list[dict[str, Any]]) -> pd.DataFrame:
                 "size": safe_float(trade.get("size")),
                 "cost": safe_float(trade.get("cost")),
                 "pnl": safe_float(trade.get("pnl")),
+                # pnl_pct: state'de yoksa initial_capital'dan hesapla
                 "pnl_pct": safe_float(trade.get("pnl_pct")),
                 "reason": trade.get("exit_reason", ""),
                 "bars_held": safe_int(trade.get("bars_held")),
@@ -896,6 +898,11 @@ def prepare_state_trades(trades: list[dict[str, Any]]) -> pd.DataFrame:
     if sort_key:
         df = df.sort_values(sort_key, ascending=True, na_position="last").reset_index(drop=True)
     df["cum_pnl"] = df["pnl"].cumsum()
+    # pnl_pct yoksa entry_price × size'dan hesapla (SHORT için negatif olabilir)
+    if "pnl_pct" in df.columns:
+        mask = df["pnl_pct"] == 0.0
+        cost_basis = (df["entry_price"] * df["size"]).replace(0, float("nan"))
+        df.loc[mask, "pnl_pct"] = (df.loc[mask, "pnl"] / cost_basis.loc[mask] * 100)
     return df
 
 
