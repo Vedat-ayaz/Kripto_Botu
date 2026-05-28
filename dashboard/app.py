@@ -930,7 +930,7 @@ def build_model_summary(name: str, state: dict[str, Any] | None) -> dict[str, An
     return_pct = safe_float(state.get("total_pnl_pct"))
     drawdown_pct = safe_float(state.get("max_drawdown_pct"))
     win_rate = safe_float(state.get("win_rate"))
-    trade_count = safe_int(state.get("total_trades"))
+    trade_count = safe_int(state.get("total_trades")) or len(state.get("closed_trades", []))
     open_positions = state.get("open_positions", []) or []
     final_balance = safe_float(state.get("final_balance"), initial_capital + total_pnl)
     run_dt = parse_timestamp(state.get("run_time"))
