@@ -883,7 +883,10 @@ def prepare_state_trades(trades: list[dict[str, Any]]) -> pd.DataFrame:
                 "exit_price": safe_float(trade.get("exit_price")),
                 # v14: kullanıcı isteği — adet (size) ve maliyet (cost) tabloya geldi
                 "size": safe_float(trade.get("size")),
-                "cost": safe_float(trade.get("cost")),
+                # cost yoksa entry_price × size'dan hesapla (eski kayıtlar için fallback)
+                "cost": safe_float(trade.get("cost")) or (
+                    safe_float(trade.get("entry_price")) * safe_float(trade.get("size"))
+                ),
                 "pnl": safe_float(trade.get("pnl")),
                 # pnl_pct: state'de yoksa initial_capital'dan hesapla
                 "pnl_pct": safe_float(trade.get("pnl_pct")),

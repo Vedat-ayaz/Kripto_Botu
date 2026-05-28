@@ -335,6 +335,7 @@ class LiveEngine:
                     "entry_price":  pos_d["entry_price"],
                     "exit_price":   float(fill),
                     "size":         size,
+                    "cost":         float(pos_d.get("cost", float(pos_d["entry_price"]) * size)),
                     "pnl":          float(pnl),
                     "exit_reason":  exit_reason,
                     "entry_date":   pos_d["entry_date"],
