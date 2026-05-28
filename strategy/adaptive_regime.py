@@ -70,10 +70,10 @@ _REGIME_TABLE: dict[Regime, RegimeParams] = {
         coin_tier=5,
     ),
     Regime.NEUTRAL: RegimeParams(
-        position_size_mult=0.80,
-        entry_score_boost=+0.03,
-        trailing_mult_boost=-0.1,
-        max_positions=8,
+        position_size_mult=0.55,   # v17: 0.80→0.55 — NEUTRAL'da trend yok, komisyon kaybı kıs
+        entry_score_boost=+0.08,   # v17: 0.03→0.08 — giriş eşiğini yükselt, kaliteli sinyal bekle
+        trailing_mult_boost=+0.0,
+        max_positions=6,           # v17: 8→6 — daha az eş zamanlı pozisyon
         coin_tier=5,
     ),
     Regime.BULL: RegimeParams(

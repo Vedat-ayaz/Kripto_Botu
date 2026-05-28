@@ -126,11 +126,11 @@ M4_WFO_ROLLING_LOOKBACK  = 200   # Rolling WFO in-sample penceresi (gün)
 M4_BULL_VS720_THRESHOLD  = 0.02  # BULL tespiti eşiği (eski: 0.04)
 M4_BULL_ABOVE_FRAC       = 0.50  # BULL above_frac eşiği (eski: 0.55)
 M4_POSITION_MULT: dict[str, float] = {
-    "STRONG_BEAR": 0.6,   # Ayıda küçült — sermaye koru
-    "BEAR":        0.8,   # Ayıda küçült — sermaye koru
-    "NEUTRAL":     1.0,   # Değişiklik yok
-    "BULL":        1.0,   # Boğada büyütme — Max DD artırıyor, kaldırıldı
-    "STRONG_BULL": 1.0,   # Boğada büyütme — Max DD artırıyor, kaldırıldı
+    "STRONG_BEAR": 0.4,   # Güçlü ayıda defansif — neredeyse dur
+    "BEAR":        0.6,   # Ayıda küçült — sermaye koru
+    "NEUTRAL":     0.55,  # v17: NEUTRAL'da yarı boyut — trend yok, komisyon kaybı azalt
+    "BULL":        1.0,   # Boğada tam boyut
+    "STRONG_BULL": 1.2,   # Güçlü boğada hafifçe büyüt (max DD sınırlı)
 }
 
 SYMBOL_ALIASES = {}
@@ -168,9 +168,10 @@ PROFILES: dict[str, dict] = {
     "ETH/USDT":  dict(adx_threshold=20, rsi_lower=50, atr_stop_multiplier=2.5,
                       trailing_stop_atr_multiplier=4.5, entry_score_trend=0.60, entry_score_ranging=0.65),
     # SOL: yüksek volatilite → geniş stop, yüksek ADX şartı, küçük pozisyon
-    "SOL/USDT":  dict(adx_threshold=26, rsi_lower=50, atr_stop_multiplier=2.5,
-                      trailing_stop_atr_multiplier=5.5, entry_score_trend=0.65, entry_score_ranging=0.70,
-                      max_position_pct=0.06, sl_cooldown_hours=36),
+    # v17: 116 işlem → çok fazla. ADX 26→30, score eşikleri yükselt, cooldown artır
+    "SOL/USDT":  dict(adx_threshold=30, rsi_lower=52, atr_stop_multiplier=2.8,
+                      trailing_stop_atr_multiplier=6.0, entry_score_trend=0.68, entry_score_ranging=0.73,
+                      max_position_pct=0.05, sl_cooldown_hours=48),
     # XRP: güçlü trendlerde iyi, choppy dönemlerde kötü → seçici giriş + cooldown
     "XRP/USDT":  dict(adx_threshold=26, rsi_lower=50, atr_stop_multiplier=2.5,
                       trailing_stop_atr_multiplier=5.5, entry_score_trend=0.66, entry_score_ranging=0.70,
@@ -195,12 +196,13 @@ PROFILES: dict[str, dict] = {
     "LEO/USDT":  dict(adx_threshold=26, rsi_lower=50, atr_stop_multiplier=2.5,
                       trailing_stop_atr_multiplier=6.0, entry_score_trend=0.70, entry_score_ranging=0.75,
                       risk_per_trade=0.008, max_position_pct=0.02, sl_cooldown_hours=48),
-    # TRX: M4v11 — kısıtlamalar gevşetildi (breakout_bars=40→20, sl_cooldown=72→36h,
-    # risk_per_trade=0.006→0.010, max_position_pct=0.05→0.12)
-    # Önceki 7 ay / 7 işlem → +0.63% (coin +34%) → filtreler çok sıkıydı.
-    "TRX/USDT":  dict(adx_threshold=25, rsi_lower=47, atr_stop_multiplier=2.5,
-                      trailing_stop_atr_multiplier=6.0, entry_score_trend=0.67, entry_score_ranging=0.71,
-                      risk_per_trade=0.010, max_position_pct=0.12, breakout_bars=20, sl_cooldown_hours=36),
+    # TRX: v17 — düşük volatilite coin, 15m ATR ~$0.0015 → stop çok dar → gürültü SL
+    # Çözüm: trailing_mult yükselt (6→8), min_stop_pct ekle (%1.5), seyrek giriş
+    # Backtest: 24 işlem -$6.42, coin +30.7% → trailing çok dar tutuyordu
+    "TRX/USDT":  dict(adx_threshold=22, rsi_lower=47, atr_stop_multiplier=3.0,
+                      trailing_stop_atr_multiplier=8.0, entry_score_trend=0.65, entry_score_ranging=0.69,
+                      risk_per_trade=0.012, max_position_pct=0.15, breakout_bars=16,
+                      sl_cooldown_hours=24, min_stop_pct=0.015),
     # ── Yeni coinler (UNIVERSE genişlemesi) ──────────────────────────────────
     "LINK/USDT": dict(adx_threshold=25, rsi_lower=48, atr_stop_multiplier=2.5,
                       trailing_stop_atr_multiplier=5.0, entry_score_trend=0.65, entry_score_ranging=0.70,
@@ -1397,7 +1399,7 @@ def run_portfolio_backtest(
                     coin_adx_strong = float(slice_df["adx"].iloc[-1]) > 22
 
                 # Global bear rejimde coin kendi boğa trendindeyse kısıtlamaları gevşet
-                in_global_bear   = _current_regime_params.entry_score_boost >= 0.07
+                in_global_bear   = _current_regime_params.entry_score_boost >= 0.11  # v17: 0.07→0.11 (NEUTRAL boost 0.08 ile çakışmayı önle)
                 in_strong_bear   = _current_regime_params.entry_score_boost >= 0.20  # STRONG_BEAR rejimi
                 # BULL/STRONG_BULL tespiti (entry_score_boost negatif = daha kolay giriş)
                 in_global_bull   = _current_regime_params.entry_score_boost <= -0.03
@@ -1503,6 +1505,10 @@ def run_portfolio_backtest(
                         min_adx = 27 if ema_gap_pct < 0.05 else (22 if coin_own_bull else 18)
                     else:
                         min_adx = 22 if coin_own_bull else 18
+                    # v17: NEUTRAL rejimde trend belirsiz → ADX eşiğini +5 artır
+                    _is_neutral = not in_global_bear and not in_global_bull
+                    if _is_neutral:
+                        min_adx += 5
                     if adx_val < min_adx:
                         continue
 
@@ -1604,6 +1610,13 @@ def run_portfolio_backtest(
                 if is_short_signal and not in_global_bear:
                     continue  # NEUTRAL/BULL zaten üstte bloklandı; burada NEUTRAL guard
 
+                # ── v17: ADX minimum kalite filtresi ─────────────────────────────────
+                # ADX < 18 → düz/choppy piyasa, trend-following sinyali anlamsız
+                # Bu tek filtre ile NEUTRAL rejimde çok sayıda gürültü işlem engellenir.
+                _adx_min = 22 if is_short_signal else 18
+                if _adx_now < _adx_min:
+                    continue  # trend gücü yetersiz → giriş yasak
+
                 # ── M5-2: Circuit Breaker — DD > %22 ise yeni giriş yok ────────────
                 # Sadece çok yıllık testlerde (>400 gün) aktif
                 if _m5_cb_active and _cb_mult == 0.0:
@@ -1680,12 +1693,14 @@ def run_portfolio_backtest(
                 risk_amt = balance * risk_pct_adj
                 atr_stop = coin_risk[sym].get("atr_stop_multiplier", ATR_STOP_MULT)
 
+                # v17: Per-coin min_stop_pct (varsayılan %0.6, TRX gibi low-vol için %1.5)
+                _min_stop_pct = coin_risk[sym].get("min_stop_pct", 0.006)
                 if is_short_signal:
                     stop_px   = price + atr_stop * atr   # SHORT stop: yukarıda
-                    stop_dist = max(stop_px - price, price * 0.001)
+                    stop_dist = max(stop_px - price, price * _min_stop_pct)
                 else:
                     stop_px   = price - atr_stop * atr
-                    stop_dist = max(price - stop_px, price * 0.001)
+                    stop_dist = max(price - stop_px, price * _min_stop_pct)
                 size = risk_amt / stop_dist
 
                 # Max position cap (per-coin override mümkün)
