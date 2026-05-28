@@ -1893,9 +1893,16 @@ def render_model_summary_card(model: dict[str, Any], accent: str, subtitle: str)
         size = safe_float(p.get("size"))
         notional_acik += ep * size
         if p.get("is_short", False):
-            margin_bloke += safe_float(p.get("margin_locked"))
+            margin = safe_float(p.get("margin_locked", 0))
+            if margin < 0.01:
+                # Eski pozisyon: margin_locked kaydedilmemiş → stop_price'tan tahmin et
+                stop  = safe_float(p.get("stop_price", 0))
+                trail = safe_float(p.get("trail_price", 0))
+                ref   = max(stop, trail)          # SHORT'ta stop entry'nin üzerinde
+                margin = abs(ref - ep) * size if ref > ep else ep * size * 0.02
+            margin_bloke += margin
         else:
-            cost = safe_float(p.get("cost"))
+            cost = safe_float(p.get("cost", 0))
             margin_bloke += cost if cost > 1.0 else ep * size
 
     st.markdown(
@@ -1910,9 +1917,9 @@ def render_model_summary_card(model: dict[str, Any], accent: str, subtitle: str)
             PF {pf_text}
           </div>
           <div class="panel-copy" style="margin-top:0.4rem; font-size:0.82rem; color:#6b7280;">
-            💰 Serbest: {format_money(free_cash)} &nbsp;|&nbsp;
-            🔒 Marjin: {format_money(margin_bloke)} &nbsp;|&nbsp;
-            📊 Açık: {format_money(notional_acik)}
+            💰 Nakit: {format_money(free_cash)} &nbsp;|&nbsp;
+            📦 Yatırılan: {format_money(margin_bloke)} &nbsp;|&nbsp;
+            🔗 Notional: {format_money(notional_acik)}
           </div>
           <div class="badge-row" style="margin-top:0.8rem">
             <span class="badge badge-neutral">{model["trade_count"]} islem</span>
