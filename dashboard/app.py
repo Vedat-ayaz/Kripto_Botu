@@ -1882,15 +1882,25 @@ def render_model_summary_card(model: dict[str, Any], accent: str, subtitle: str)
     pf_value = model["profit_factor"]
     pf_text = "inf" if math.isinf(pf_value) else f"{pf_value:.2f}"
 
-    # Serbest nakit vs coinde olan miktar
+    # Serbest nakit vs bloke edilen miktar
+    # LONG: entry_price × size bloke (para coinde)
+    # SHORT: sadece margin_locked bloke (notional değer değil)
     state       = model.get("state") or {}
     free_cash   = safe_float(state.get("balance"))
     open_pos    = state.get("open_positions", []) or []
-    in_coins    = sum(
-        safe_float(p.get("cost")) if safe_float(p.get("cost")) > 1
-        else safe_float(p.get("entry_price")) * safe_float(p.get("size"))
-        for p in open_pos
-    )
+    in_coins = 0.0
+    for p in open_pos:
+        is_short = p.get("is_short", False)
+        if is_short:
+            # SHORT: margin_locked varsa onu kullan, yoksa cost - position_value farkını atla
+            margin = safe_float(p.get("margin_locked"))
+            in_coins += margin
+        else:
+            # LONG: gerçek maliyet (entry_price × size)
+            cost = safe_float(p.get("cost"))
+            if cost < 1.0:
+                cost = safe_float(p.get("entry_price")) * safe_float(p.get("size"))
+            in_coins += cost
     total_val   = free_cash + in_coins
     in_pct      = (in_coins / total_val * 100) if total_val > 0 else 0
     free_pct    = 100 - in_pct
