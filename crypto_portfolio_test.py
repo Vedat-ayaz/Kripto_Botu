@@ -511,11 +511,18 @@ def make_strategy(symbol: str, wfo_params: Optional[dict] = None, coin_df: Optio
         strat_params["mtf_filter_enabled"] = False         # 5m'de HTF filtresi aşırı blokluyor
         strat_params["min_atr_ratio"] = 0.0008             # 5m ATR: 0.002 → 0.0008
         strat_params["short_ema_pct"] = 0.998              # SHORT tetik: %0.2 altı yeterli
-        strat_params["short_momentum_lookback"] = 288      # 5m: 1 günlük momentum (288 bar)
-        strat_params["short_mom_pct"] = 1.001              # sadece yükseliyorsa engelle
+        strat_params["short_momentum_lookback"] = 480      # 5m: ~1.7 günlük momentum (kalibre edildi)
+        strat_params["short_mom_pct"] = 0.95               # %5 düşüş gerekli (kalibre edildi)
         strat_params["short_score_trend_thr"] = 0.30      # 5m SHORT score eşiği
         strat_params["short_score_range_thr"] = 0.27      # 5m SHORT score ranging
         strat_params["short_require_ema_slope"] = False    # ranging'de slope şartı yok
+
+    if timeframe == "15m":
+        # 15m: M4/M5 swing — kalibrasyon sonucu: uzun momentum filtresi
+        # Analiz: 180 günlük backtest → 288-bar momentum (3 gün) → WR %26.5, -$224
+        #         480-bar momentum (5 gün) → WR %28.9, -$143 (%36 daha az kayıp)
+        strat_params["short_momentum_lookback"] = 480      # 5 gün @ 15m (96 bar/gün × 5)
+        strat_params["short_mom_pct"] = 0.95               # 5 günde %5+ düşüş gerekli
 
     inds = TechnicalIndicators()
     strategy = TrendFollowingStrategy(**strat_params, indicators=inds)
@@ -1590,6 +1597,12 @@ def run_portfolio_backtest(
                 # BULL/STRONG_BULL global rejimde SHORT yasak (ana trende karşı gidilmez)
                 if is_short_signal and in_global_bull:
                     continue  # global boğa piyasasında short → kayıp
+
+                # NEUTRAL rejimde SHORT yasak — kalibrasyon analizi gösterdi ki
+                # NEUTRAL piyasada SHORT WR ~%27, trend olmadan trend-following kaybeder.
+                # SHORT sadece onaylanmış BEAR veya STRONG_BEAR rejiminde açılır.
+                if is_short_signal and not in_global_bear:
+                    continue  # NEUTRAL/BULL zaten üstte bloklandı; burada NEUTRAL guard
 
                 # ── M5-2: Circuit Breaker — DD > %22 ise yeni giriş yok ────────────
                 # Sadece çok yıllık testlerde (>400 gün) aktif

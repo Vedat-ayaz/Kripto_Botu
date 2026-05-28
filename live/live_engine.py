@@ -500,6 +500,12 @@ class LiveEngine:
             if is_short_signal and coin_own_bull:
                 continue
 
+            # ── NEUTRAL rejimde SHORT yasak (kalibrasyon: 180-gün analiz) ─
+            # NEUTRAL'da SHORT WR ~%27 — trend olmadan trend-following kayıp verir.
+            # SHORT yalnızca onaylanmış BEAR veya STRONG_BEAR rejiminde açılır.
+            if is_short_signal and not in_global_bear:
+                continue
+
             # ── Pozisyon boyutu ───────────────────────────────────────────
             risk_pct    = risk_params.get("risk_per_trade", RISK_PER_TRADE)
             atr_stop    = risk_params.get("atr_stop_multiplier", ATR_STOP_MULT)
