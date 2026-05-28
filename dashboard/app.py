@@ -2025,18 +2025,26 @@ def render_state_open_positions(state: dict[str, Any] | None) -> None:
 
     rows = []
     for pos in positions:
-        entry = safe_float(pos.get("entry_price"))
-        last = safe_float(pos.get("last_price"))
+        entry   = safe_float(pos.get("entry_price"))
+        upnl    = safe_float(pos.get("unrealized_pnl"))
+        cost    = safe_float(pos.get("cost"))
+        # cost küçükse (eski SHORT margin rezervi) entry×size kullan
+        if cost < 1.0 and entry > 0:
+            cost = entry * safe_float(pos.get("size"))
+        upnl_pct = (upnl / cost * 100) if cost > 0 else 0.0
+        # Yon: is_short → SHORT/LONG
+        is_short = pos.get("is_short", False)
+        yon = "SHORT" if is_short else "LONG"
         rows.append(
             {
-                "Coin": symbol_label(pos.get("symbol", "")),
-                "Yon": pos.get("side", ""),
+                "Coin":  symbol_label(pos.get("symbol", "")),
+                "Yon":   yon,
                 "Giris": format_money(entry, 4 if entry < 1 else 2),
-                "Son": format_money(last, 4 if last < 1 else 2),
-                "PnL": format_money(pos.get("unrealized_pnl", 0.0)),
-                "PnL %": format_pct(pos.get("unrealized_pct", 0.0)),
-                "Stop": format_money(pos.get("stop_price", 0.0), 4 if safe_float(pos.get("stop_price")) < 1 else 2),
-                "Pyramid": safe_int(pos.get("pyramid_count")),
+                "Maliyet": format_money(cost),
+                "PnL":   format_money(upnl),
+                "PnL %": format_pct(upnl_pct),
+                "Stop":  format_money(safe_float(pos.get("stop_price")), 4 if safe_float(pos.get("stop_price")) < 1 else 2),
+                "Bars":  safe_int(pos.get("bars_held")),
             }
         )
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
