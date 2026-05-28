@@ -1371,16 +1371,19 @@ def render_open_positions_allocation(
         if not model.get("available"):
             continue
         for pos in model.get("open_positions", []):
-            cost  = safe_float(pos.get("cost", 0))
-            entry = safe_float(pos.get("entry_price", 0))
-            upnl  = safe_float(pos.get("unrealized_pnl", 0))
+            ep       = safe_float(pos.get("entry_price", 0))
+            size     = safe_float(pos.get("size", 0))
+            cost     = safe_float(pos.get("cost", 0)) or ep * size
+            upnl     = safe_float(pos.get("unrealized_pnl", 0))
+            is_short = pos.get("is_short", False)
             all_positions.append({
-                "model": model["name"],
-                "sym":   pos.get("symbol", ""),
-                "label": symbol_label(pos.get("symbol", "")),
-                "cost":  cost,
-                "entry": entry,
-                "upnl":  upnl,
+                "model":    model["name"],
+                "sym":      pos.get("symbol", ""),
+                "label":    symbol_label(pos.get("symbol", "")),
+                "cost":     cost,
+                "entry":    ep,
+                "upnl":     upnl,
+                "is_short": is_short,
             })
 
     if not all_positions:
@@ -1395,8 +1398,14 @@ def render_open_positions_allocation(
     for p in all_positions:
         upnl_color = PALETTE["success"] if p["upnl"] >= 0 else PALETTE["danger"]
         upnl_sign  = "+" if p["upnl"] >= 0 else ""
+        side_tag   = (
+            f'<span style="color:#ef4444;font-size:0.72rem;font-weight:700">▼SHORT</span>&nbsp;'
+            if p["is_short"] else
+            f'<span style="color:#10b981;font-size:0.72rem;font-weight:700">▲LONG</span>&nbsp;'
+        )
         badges.append(
             f'<span class="badge badge-neutral" style="font-size:0.82rem">'
+            f'{side_tag}'
             f'<b>{p["label"]}</b>&nbsp;'
             f'<span style="color:{PALETTE["muted"]}">[{p["model"]}]</span>&nbsp;'
             f'${p["cost"]:,.0f}'
@@ -1906,11 +1915,23 @@ def render_model_summary_card(model: dict[str, Any], accent: str, subtitle: str)
             cost = safe_float(p.get("cost", 0))
             long_cost += cost if cost > 1.0 else ep * size
 
+    # Notional toplamı (tüm pozisyonlar)
+    short_notional = sum(
+        safe_float(p.get("cost", 0)) or safe_float(p.get("entry_price", 0)) * safe_float(p.get("size", 0))
+        for p in open_pos if p.get("is_short", False)
+    )
+
     # Pozisyon satırını oluştur
     pos_parts = []
-    if n_long  > 0: pos_parts.append(f"📈 LONG: {format_money(long_cost)}")
-    if n_short > 0: pos_parts.append(f"📉 SHORT marjin: {format_money(short_mrgn)}")
-    if not pos_parts:   pos_parts.append("Pozisyon yok")
+    if n_long > 0:
+        pos_parts.append(f"📈 LONG: {format_money(long_cost)}")
+    if n_short > 0:
+        pos_parts.append(
+            f"📉 SHORT: {format_money(short_notional)} "
+            f"<span style='color:#9ca3af'>(marjin: {format_money(short_mrgn)})</span>"
+        )
+    if not pos_parts:
+        pos_parts.append("Pozisyon yok")
     pos_line = " &nbsp;|&nbsp; ".join(pos_parts)
 
     st.markdown(
