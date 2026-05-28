@@ -1882,28 +1882,21 @@ def render_model_summary_card(model: dict[str, Any], accent: str, subtitle: str)
     pf_value = model["profit_factor"]
     pf_text = "inf" if math.isinf(pf_value) else f"{pf_value:.2f}"
 
-    # Serbest nakit vs bloke edilen miktar
-    # LONG: entry_price × size bloke (para coinde)
-    # SHORT: sadece margin_locked bloke (notional değer değil)
+    # Bakiye dağılımı hesabı
     state       = model.get("state") or {}
     free_cash   = safe_float(state.get("balance"))
     open_pos    = state.get("open_positions", []) or []
-    in_coins = 0.0
+    margin_bloke  = 0.0   # gerçekten bloke edilen (LONG: harcanan, SHORT: margin)
+    notional_acik = 0.0   # toplam pozisyon büyüklüğü (açıklama için)
     for p in open_pos:
-        is_short = p.get("is_short", False)
-        if is_short:
-            # SHORT: margin_locked varsa onu kullan, yoksa cost - position_value farkını atla
-            margin = safe_float(p.get("margin_locked"))
-            in_coins += margin
+        ep   = safe_float(p.get("entry_price"))
+        size = safe_float(p.get("size"))
+        notional_acik += ep * size
+        if p.get("is_short", False):
+            margin_bloke += safe_float(p.get("margin_locked"))
         else:
-            # LONG: gerçek maliyet (entry_price × size)
             cost = safe_float(p.get("cost"))
-            if cost < 1.0:
-                cost = safe_float(p.get("entry_price")) * safe_float(p.get("size"))
-            in_coins += cost
-    total_val   = free_cash + in_coins
-    in_pct      = (in_coins / total_val * 100) if total_val > 0 else 0
-    free_pct    = 100 - in_pct
+            margin_bloke += cost if cost > 1.0 else ep * size
 
     st.markdown(
         f"""
@@ -1917,8 +1910,9 @@ def render_model_summary_card(model: dict[str, Any], accent: str, subtitle: str)
             PF {pf_text}
           </div>
           <div class="panel-copy" style="margin-top:0.4rem; font-size:0.82rem; color:#6b7280;">
-            💰 Serbest: {format_money(free_cash)} ({free_pct:.0f}%) &nbsp;|&nbsp;
-            📦 Coinde: {format_money(in_coins)} ({in_pct:.0f}%)
+            💰 Serbest: {format_money(free_cash)} &nbsp;|&nbsp;
+            🔒 Marjin: {format_money(margin_bloke)} &nbsp;|&nbsp;
+            📊 Açık: {format_money(notional_acik)}
           </div>
           <div class="badge-row" style="margin-top:0.8rem">
             <span class="badge badge-neutral">{model["trade_count"]} islem</span>
