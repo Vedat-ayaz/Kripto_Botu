@@ -1881,6 +1881,20 @@ def render_model_summary_card(model: dict[str, Any], accent: str, subtitle: str)
 
     pf_value = model["profit_factor"]
     pf_text = "inf" if math.isinf(pf_value) else f"{pf_value:.2f}"
+
+    # Serbest nakit vs coinde olan miktar
+    state       = model.get("state") or {}
+    free_cash   = safe_float(state.get("balance"))
+    open_pos    = state.get("open_positions", []) or []
+    in_coins    = sum(
+        safe_float(p.get("cost")) if safe_float(p.get("cost")) > 1
+        else safe_float(p.get("entry_price")) * safe_float(p.get("size"))
+        for p in open_pos
+    )
+    total_val   = free_cash + in_coins
+    in_pct      = (in_coins / total_val * 100) if total_val > 0 else 0
+    free_pct    = 100 - in_pct
+
     st.markdown(
         f"""
         <div class="panel" style="border-top: 6px solid {accent};">
@@ -1892,9 +1906,13 @@ def render_model_summary_card(model: dict[str, Any], accent: str, subtitle: str)
             WR {model["win_rate"]:.1f}% ·
             PF {pf_text}
           </div>
+          <div class="panel-copy" style="margin-top:0.4rem; font-size:0.82rem; color:#6b7280;">
+            💰 Serbest: {format_money(free_cash)} ({free_pct:.0f}%) &nbsp;|&nbsp;
+            📦 Coinde: {format_money(in_coins)} ({in_pct:.0f}%)
+          </div>
           <div class="badge-row" style="margin-top:0.8rem">
             <span class="badge badge-neutral">{model["trade_count"]} islem</span>
-            <span class="badge badge-neutral">{len(model["open_positions"])} acik pozisyon</span>
+            <span class="badge badge-neutral">{len(open_pos)} acik pozisyon</span>
             <span class="badge badge-primary">{model["freshness"]}</span>
           </div>
         </div>
