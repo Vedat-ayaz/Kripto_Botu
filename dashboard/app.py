@@ -107,30 +107,31 @@ def inject_styles() -> None:
             display: none;
           }}
 
-          div[data-testid="metric-container"] {{
+          /* Streamlit 1.57 testid'leri = stMetric / stMetricValue / stMetricLabel
+             (eski 'metric-container' artık YOK → eski CSS hiç uygulanmıyordu, değer kesiliyordu). */
+          div[data-testid="stMetric"], div[data-testid="metric-container"] {{
             background: linear-gradient(180deg, {PALETTE["card"]} 0%, {PALETTE["card_alt"]} 100%);
             border: 1px solid {PALETTE["border"]};
-            border-radius: 22px;
-            padding: 14px 12px;
+            border-radius: 18px;
+            padding: 12px 10px;
             box-shadow: 0 16px 40px rgba(16, 35, 63, 0.06);
           }}
 
-          div[data-testid="metric-container"] label {{
+          div[data-testid="stMetric"] label,
+          div[data-testid="metric-container"] label,
+          [data-testid="stMetricLabel"], [data-testid="stMetricLabel"] p {{
             color: {PALETTE["muted"]} !important;
             font-size: 0.74rem !important;
             letter-spacing: 0.01em;
           }}
 
-          /* 8 metrik tek satıra sığsın: değer punto'su küçük + tek satır, kesilme/üç nokta yok */
-          div[data-testid="metric-container"] [data-testid="stMetricValue"] {{
+          /* 8 metrik tek satıra sığsın: küçük punto + tek satır + kesilme/üç nokta KAPALI. */
+          [data-testid="stMetricValue"], [data-testid="stMetricValue"] > div {{
             color: {PALETTE["ink"]} !important;
-            font-size: 1.05rem !important;
+            font-size: 1.0rem !important;
             font-weight: 800;
-            letter-spacing: -0.02em;
-            white-space: nowrap;
-            overflow: visible;
-          }}
-          div[data-testid="metric-container"] [data-testid="stMetricValue"] > div {{
+            letter-spacing: -0.03em;
+            white-space: nowrap !important;
             overflow: visible !important;
             text-overflow: clip !important;
           }}
@@ -1232,14 +1233,15 @@ def render_top_metrics(
     best_model_return = safe_float(best_dict.get("equity_return"), safe_float(best_dict.get("return_pct")))
 
     cols = st.columns(8)
-    cols[0].metric("M4 Bakiye", format_money(m4_balance), format_pct(m4_return), delta_color=style_metric_delta(m4_return))
-    cols[1].metric("M5 Bakiye", format_money(m5_balance), format_pct(m5_return), delta_color=style_metric_delta(m5_return))
-    cols[2].metric("M6 Bakiye", format_money(m6_balance), format_pct(m6_return), delta_color=style_metric_delta(m6_return))
-    cols[3].metric("M7 Bakiye", format_money(m7_balance), format_pct(m7_return), delta_color=style_metric_delta(m7_return))
+    # Üst satırda 8 metrik var → bakiyeler TAM DOLAR (kuruşsuz) gösterilir ki dar sütuna sığsın.
+    cols[0].metric("M4 Bakiye", format_money(m4_balance, 0), format_pct(m4_return), delta_color=style_metric_delta(m4_return))
+    cols[1].metric("M5 Bakiye", format_money(m5_balance, 0), format_pct(m5_return), delta_color=style_metric_delta(m5_return))
+    cols[2].metric("M6 Bakiye", format_money(m6_balance, 0), format_pct(m6_return), delta_color=style_metric_delta(m6_return))
+    cols[3].metric("M7 Bakiye", format_money(m7_balance, 0), format_pct(m7_return), delta_color=style_metric_delta(m7_return))
     cols[4].metric("Acik Pozisyon", str(len(open_positions)), f"{trade_count} kapali islem")
     cols[5].metric("Piyasa Nefesi", format_pct(breadth["avg_change"]), f"{breadth['gainers']} / {breadth['losers']}", delta_color=style_metric_delta(breadth["avg_change"]))
     cols[6].metric("Onde Model", best_model, format_pct(best_model_return), delta_color=style_metric_delta(best_model_return))
-    cols[7].metric("Toplam Sermaye", format_money(total_balance), format_money(total_pnl), delta_color=style_metric_delta(total_pnl))
+    cols[7].metric("Toplam Sermaye", format_money(total_balance, 0), format_money(total_pnl), delta_color=style_metric_delta(total_pnl))
 
 
 def render_section_header(title: str, copy: str, right: str = "") -> None:
