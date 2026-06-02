@@ -1232,16 +1232,18 @@ def render_top_metrics(
     best_model = best_name
     best_model_return = safe_float(best_dict.get("equity_return"), safe_float(best_dict.get("return_pct")))
 
-    cols = st.columns(8)
-    # Üst satırda 8 metrik var → bakiyeler TAM DOLAR (kuruşsuz) gösterilir ki dar sütuna sığsın.
+    cols = st.columns(7)
+    # Üst satırda 7 metrik → bakiyeler TAM DOLAR (kuruşsuz) gösterilir ki dar sütuna sığsın.
     cols[0].metric("M4 Bakiye", format_money(m4_balance, 0), format_pct(m4_return), delta_color=style_metric_delta(m4_return))
     cols[1].metric("M5 Bakiye", format_money(m5_balance, 0), format_pct(m5_return), delta_color=style_metric_delta(m5_return))
     cols[2].metric("M6 Bakiye", format_money(m6_balance, 0), format_pct(m6_return), delta_color=style_metric_delta(m6_return))
     cols[3].metric("M7 Bakiye", format_money(m7_balance, 0), format_pct(m7_return), delta_color=style_metric_delta(m7_return))
     cols[4].metric("Acik Pozisyon", str(len(open_positions)), f"{trade_count} kapali islem")
-    cols[5].metric("Piyasa Nefesi", format_pct(breadth["avg_change"]), f"{breadth['gainers']} / {breadth['losers']}", delta_color=style_metric_delta(breadth["avg_change"]))
-    cols[6].metric("Onde Model", best_model, format_pct(best_model_return), delta_color=style_metric_delta(best_model_return))
-    cols[7].metric("Toplam Sermaye", format_money(total_balance, 0), format_money(total_pnl), delta_color=style_metric_delta(total_pnl))
+    # Piyasa Nefesi: delta (yükselen/düşen sayısı) piyasa yönüne göre renklendirilir.
+    # avg_change < 0 → piyasa eksi → delta kırmızı; avg_change ≥ 0 → yeşil.
+    _breadth_delta = f"{breadth['gainers']} yukselen / {breadth['losers']} dusen"
+    cols[5].metric("Piyasa Nefesi", format_pct(breadth["avg_change"]), _breadth_delta, delta_color=style_metric_delta(breadth["avg_change"]))
+    cols[6].metric("Toplam Sermaye", format_money(total_balance, 0), format_money(total_pnl), delta_color=style_metric_delta(total_pnl))
 
 
 def render_section_header(title: str, copy: str, right: str = "") -> None:
