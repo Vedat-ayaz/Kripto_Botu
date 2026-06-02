@@ -2832,13 +2832,6 @@ def main() -> None:
         signal_df = prepare_signal_df(snapshot.get("signals") or [])
         signal_map = build_signal_map(signal_df)
 
-        render_hero(
-            exchange_name=exchange_name,
-            breadth=breadth,
-            m4=m4,
-            m5=m5,
-            bot_status=snapshot.get("status"),
-        )
         render_top_metrics(snapshot=snapshot, breadth=breadth, m4=m4, m5=m5, m6=m6, m7=m7)
 
         tabs = st.tabs(
