@@ -664,7 +664,7 @@ def load_config() -> dict[str, Any]:
         return yaml.safe_load(handle) or {}
 
 
-@st.cache_data(ttl=5, show_spinner=False)
+@st.cache_data(ttl=890, show_spinner=False)
 def load_model_state(path_str: str) -> dict[str, Any] | None:
     path = Path(path_str)
     if not path.exists():
@@ -675,7 +675,7 @@ def load_model_state(path_str: str) -> dict[str, Any] | None:
         return None
 
 
-@st.cache_data(ttl=5, show_spinner=False)
+@st.cache_data(ttl=890, show_spinner=False)
 def load_bot_snapshot() -> dict[str, Any]:
     return {
         "status": DB.get_bot_status(),
@@ -2805,7 +2805,7 @@ def main() -> None:
     with top_mid:
         refresh_enabled = st.toggle("Otomatik yenile", value=True, key="auto_refresh_toggle")
     with top_right:
-        refresh_seconds = st.selectbox("Yenileme araligi", options=[10, 20, 30, 60], index=1, key="auto_refresh_seconds")
+        refresh_seconds = st.selectbox("Yenileme araligi", options=[30, 60, 300, 900], index=3, key="auto_refresh_seconds")
 
     action_left, action_right = st.columns([2, 10])
     with action_left:
