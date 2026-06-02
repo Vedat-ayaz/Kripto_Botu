@@ -387,6 +387,30 @@ M7_SHORTS_LIKE_M5     = int(os.environ.get("M7_SHORTS_LIKE_M5", "0"))  # 0=kapal
 M7_HMA_PERIOD         = int(os.environ.get("M7_HMA_PERIOD", "20"))      # HMA erken-giriş periyodu (tara: 10..30)
 M7_LAMBDA_TILT        = float(os.environ.get("M7_LAMBDA_TILT", "0.55")) # SHORT boyut çarpanı: 0.55=varsayılan long-tilt (6ay getiri+%0.10 & DD−%28); 1.0=kapalı, 0.43=düşük-DD
 
+# ── M8 (AdaptiveVolume) — M7 klonu + hacim iyileştirmeleri ───────────────────
+# NOT: M7 DONUKTUR — M8'e eklenen hiçbir şey M7 kod yolunu değiştirmez.
+# Her lever ayrı test edilir; yalnızca kâr eden içerde kalır (M7→M8 yolculuğu).
+#
+# LEVER 1 — Likidite filtresi: düşük hacimli coinde işlem açma.
+# Araştırma: thin-spread coinler (LEO vb.) gürültüden sinyal üretir, slot israf eder.
+# Eşik = 20-bar volume_sma × bar_minutes × 60 yaklaşımı değil doğrudan USDT cinsinden
+# volume_sma referansı kullanılır (volume kolonu zaten USDT-base-cinsinden).
+M8_MIN_VOL_USDT   = float(os.environ.get("M8_MIN_VOL_USDT", "500000"))  # 500K USDT/bar → ince-spreadli coinleri ele (6ay +0.09→+0.51%, PF 1.14→2.13)
+
+# LEVER 2 — OBV Divergence çıkışı: fiyat lokal tepede ama OBV düşüyorsa çık.
+# Araştırma: dağıtım sinyali → büyük kayıplardan 3-5 bar önce uyarı verir.
+# Koşullar: pozisyondayken LONG + fiyat son N-bar high'ının yakınında + OBV X-bar düşüşte + RSI>eşik.
+M8_OBV_DIV_EXIT   = bool(int(os.environ.get("M8_OBV_DIV_EXIT", "0")))  # 0=kapalı (6ay'da hiç ateşlenmedi → yeniden tasarım gerekiyor); 1=aç
+M8_OBV_DIV_BARS   = int(os.environ.get("M8_OBV_DIV_BARS", "3"))        # OBV kaç bar sürekli düşüş (3=optimal)
+M8_OBV_DIV_RSI    = float(os.environ.get("M8_OBV_DIV_RSI", "65"))      # RSI eşiği (65=aşırı alım bölgesi)
+M8_OBV_DIV_NEAR   = float(os.environ.get("M8_OBV_DIV_NEAR", "0.97"))   # fiyat son 10-bar high'ının kaçında (0.97=%3 altında)
+
+# LEVER 3 — Volume Spike giriş teyidi: hacim 2× ortalamanın üstündeyse giriş, değilse bekle.
+# Araştırma: 2x eşiği kurumsal alım/satım teyidi; breakout barlarında sahte sinyalleri eler.
+# Yalnızca LONG girişlere uygulanır (SHORT'ta hacim spike manipülasyon da olabilir).
+M8_VOL_SPIKE_ENTRY = bool(int(os.environ.get("M8_VOL_SPIKE_ENTRY", "0")))  # 0=KALICI KAPALI (tüm eşiklerde 6ay zarar; M7 #19 ile aynı sonuç)
+M8_VOL_SPIKE_MULT  = float(os.environ.get("M8_VOL_SPIKE_MULT", "2.0"))     # hacim > volume_sma × bu (2.0=2x)
+
 
 # ── Multi-Timeframe Helpers (v13) ─────────────────────────────────────────────
 # Per-model timeframe: M4/M5 → 15m, M6 → 1m. Helper'lar bar-bazlı varsayımları
@@ -1155,6 +1179,7 @@ def run_portfolio_backtest(
     m5_mode: bool = False,          # True → M5: ATR-percentile sizing + circuit breaker + ER gate + momentum decay
     m6_mode: bool = False,          # True → M6: agresif pyramiding + erken trailing zoom + büyük pozisyon
     m7_mode: bool = False,          # True → M7: 1m momentum scalper (hızlı TP + time-stop + rotasyon)
+    m8_mode: bool = False,          # True → M8: M7-klon + hacim iyileştirmeleri (likidite, OBV-div, spike)
     timeframe: Optional[str] = None,# v13: Bar timeframe. None → M4/M5=15m, M6/M7=1m, default=1h
     json_out: Optional[str] = None, # Opsiyonel JSON state dosyası yolu (live dashboard için)
 ) -> None:
@@ -1167,14 +1192,21 @@ def run_portfolio_backtest(
     # ══════════════════════════════════════════════════════════════════════════
     _is_m7 = m7_mode
     m7_mode = False   # eski 1m scalper kodunu tamamen kapat → M7 artık M5 davranışı
-    # v13: Per-model timeframe — M4/M5/M7 → 15m (orta-vade swing), M6 → 1m (scalping)
+    # M8 = M7 klonu + hacim iyileştirmeleri. _is_m8 gate'leri _is_m7 ile çakışmaz.
+    # m8_mode=True → m5_mode=True (M5 davranış tabanı) + _is_m7=True (M7 tüm iyileştirmeleri) + _is_m8=True (M8 ek iyileştirmeleri)
+    _is_m8 = m8_mode
+    if m8_mode:
+        m5_mode = True   # M8 taban davranışı = M5
+        _is_m7  = True   # M8, M7'nin tüm iyileştirmelerini de alır (Chandelier, BE, Sharpe, #10, λ-tilt)
+        m8_mode = False  # bayrak tüketildi
+    # v13: Per-model timeframe — M4/M5/M7/M8 → 15m (orta-vade swing), M6 → 1m (scalping)
     if timeframe is None:
         _tf_env = os.environ.get("M7_TF", "").strip()   # test override (örn "5m") — strateji TF'sini değiştir
         if _tf_env:
             timeframe = _tf_env
         elif m6_mode or m7_mode:
             timeframe = "1m"
-        elif m5_mode or m4_mode:
+        elif m5_mode or m4_mode or _is_m8:
             timeframe = "15m"
         else:
             timeframe = "1h"
@@ -1835,6 +1867,27 @@ def run_portfolio_backtest(
                 )
             except Exception:
                 should_exit = False
+            # M8 LEVER 2 — OBV DIVERGENCE ÇIKIŞI (M8 LONG pozisyon için, strategy_exit'ten bağımsız).
+            # Araştırma: fiyat lokal tepede ama OBV düşüyorsa dağıtım sinyali → büyük kayıplardan
+            # 3-5 bar önce uyarı. Koşullar birlikte tetiklenmeli (tek başına gürültülü).
+            if (not should_exit and _is_m8 and M8_OBV_DIV_EXIT
+                    and sym in open_positions and not open_positions[sym].is_short
+                    and "obv" in slice_df.columns and "rsi" in slice_df.columns):
+                _pos8    = open_positions[sym]
+                _price8  = float(df.loc[ts, "close"])
+                _rsi8    = float(slice_df["rsi"].iloc[-1]) if not pd.isna(slice_df["rsi"].iloc[-1]) else 0.0
+                _high10  = float(slice_df["high"].iloc[-10:].max()) if len(slice_df) >= 10 else _price8
+                _near_hi = _price8 >= _high10 * M8_OBV_DIV_NEAR    # fiyat son 10-bar tepesine yakın
+                # OBV son M8_OBV_DIV_BARS bar boyunca sürekli düşüyor mu?
+                _obv_s   = slice_df["obv"].iloc[-M8_OBV_DIV_BARS - 1:]
+                _obv_div = len(_obv_s) > M8_OBV_DIV_BARS and all(
+                    _obv_s.iloc[i] > _obv_s.iloc[i+1] for i in range(len(_obv_s)-1)
+                )
+                # En az +%0.5 kârda olmalı (zarardan OBV çıkışı = mantıksız)
+                _in_profit = (_price8 - _pos8.entry_price) / max(_pos8.entry_price, 1e-9) >= 0.005
+                if _near_hi and _obv_div and _rsi8 >= M8_OBV_DIV_RSI and _in_profit:
+                    should_exit = True  # OBV divergence → çık
+
             if should_exit:
                 # YENİ #13 — TREND-GÜCÜ HOLD: coin HÂLÂ güçlü aktif uptrend'deyse (yeni-zirve+ADX+EMA)
                 # strategy_exit'i bastır → güçlü pumper'da kal, tam kâr al (BNB tarzı). Trail/SL hâlâ
@@ -2158,6 +2211,15 @@ def run_portfolio_backtest(
                     except Exception:
                         continue
 
+                # M8 LEVER 1 — LİKİDİTE FİLTRESİ: düşük hacimli coinde işlem açma.
+                # volume_sma = 20-bar ortalama bar hacmi (USDT). Eşik altındaysa sinyal üretme.
+                # Araştırma: thin-spread coinler (LEO vb.) gürültüden sinyal üretir, max-pozisyon
+                # slotunu doldurur, daha iyi coinlere yer bırakmaz.
+                if _is_m8 and M8_MIN_VOL_USDT > 0 and "volume_sma" in slice_df.columns:
+                    _vsma = float(slice_df["volume_sma"].iloc[-1])
+                    if not pd.isna(_vsma) and _vsma < M8_MIN_VOL_USDT:
+                        continue  # düşük likidite → bu coini atla
+
                 # YENİ M7 İYİLEŞTİRME #7 — HMA20 ERKEN GİRİŞ (ampirik kanıtlı).
                 # Base strateji HENÜZ HOLD'ken HMA20 yükselişe dönerse M7 ERKEN LONG açar
                 # (HMA yükselişi EMA200'den ~%27 daha erken yakalar → daha erken pozisyon).
@@ -2252,6 +2314,16 @@ def run_portfolio_backtest(
                     # M6 live'da bunu kaçırıyordu: NEUTRAL'a dönen rejimde EMA200 altı coinlere LONG açıyordu
                     if _is_neutral and not coin_own_bull:
                         continue  # NEUTRAL + coinin kendi ayı trendi = LONG yasak (tüm modeller)
+
+                    # M8 LEVER 3 — VOLUME SPIKE GİRİŞ TEYİDİ (yalnızca LONG).
+                    # Araştırma: breakout barında hacim 2× ortalama → kurumsal alım teyidi; sahte
+                    # sinyalleri eler (M7 #19'dan farklı: burada Sharpe kapısı zaten geçildi,
+                    # spike son onay katmanı olarak kullanılıyor, HMA-erken atlanmıyor).
+                    if _is_m8 and M8_VOL_SPIKE_ENTRY and "volume" in slice_df.columns and "volume_sma" in slice_df.columns:
+                        _v   = float(slice_df["volume"].iloc[-1])
+                        _vma = float(slice_df["volume_sma"].iloc[-1])
+                        if not pd.isna(_vma) and _vma > 0 and _v < _vma * M8_VOL_SPIKE_MULT:
+                            continue  # hacim spike yok → bu LONG girişi atla
 
                     # M7 İYİLEŞTİRME #1 (MTF gate) — TEST EDİLDİ, YARDIMCI OLMADI → devre dışı.
                     # Sebep: M5 zaten 1h trend hizalamasını EMA200 + internal mtf_filter ile yapıyor;
@@ -2608,7 +2680,7 @@ def run_portfolio_backtest(
     # ── JSON State Export (live dashboard için) ───────────────────────────
     if json_out:
         import json as _json
-        _mode = "M7" if _is_m7 else ("M6" if m6_mode else ("M5" if m5_mode else ("M4" if m4_mode else "M1")))
+        _mode = "M8" if _is_m8 else ("M7" if _is_m7 else ("M6" if m6_mode else ("M5" if m5_mode else ("M4" if m4_mode else "M1"))))
         # PnL hesapla
         _total_pnl_pct = (balance - initial_capital) / initial_capital * 100
         # Max drawdown
@@ -2916,14 +2988,15 @@ def main() -> None:
                         help="M6 mod: M5 + agresif pyramiding + erken trailing zoom + büyük pozisyon (upside capture)")
     parser.add_argument("--m7", action="store_true",
                         help="M7 mod: M5 (15m) tabanlı + pyramiding + trailing-Sharpe coin seçim + HMA20 erken-giriş + λ=0.55 long-tilt (M5'i içerir, M5 dokunulmaz)")
+    parser.add_argument("--m8", action="store_true",
+                        help="M8 mod: M7-klon + hacim iyileştirmeleri (likidite filtresi, OBV divergence çıkış, volume spike giriş teyidi). M7 DONUK kalır.")
     args = parser.parse_args()
 
-    # YENİ M7 = M5 (15m) tabanlı + iyileştirmeler → M7, M5'i İÇERİR (tüm M5 davranışını alır).
-    # run_portfolio_backtest içinde m7_mode bayrağı kapatılır (_is_m7 olarak saklanır);
-    # iyileştirmeler _is_m7 ile gate'lenir, böylece M5 dokunulmamış kalır.
+    # M8 = M7 klonu + hacim iyileştirmeleri. M7 DONUKTUR.
+    m8_mode   = args.m8
     m7_mode   = args.m7
     m6_mode   = args.m6
-    m5_mode   = args.m5 or m6_mode or m7_mode   # M6 ve M7, M5'i içerir
+    m5_mode   = args.m5 or m6_mode or m7_mode or m8_mode   # M6/M7/M8, M5'i içerir
     m4_mode   = args.m4 or m5_mode   # M5, M4'ü içerir
     if m4_mode:
         auto_mode = True
@@ -2964,6 +3037,7 @@ def main() -> None:
         m5_mode=m5_mode,
         m6_mode=m6_mode,
         m7_mode=m7_mode,
+        m8_mode=m8_mode,
     )
 
 

@@ -54,6 +54,15 @@ from crypto_portfolio_test import (
     # ── M7 (AdaptiveTrend) yardımcıları + sabitleri — yalnız m7_mode altında kullanılır ──
     _hma,
     _coin_trailing_sharpe,
+    # ── M8 (AdaptiveVolume) sabitleri — yalnız m8_mode altında kullanılır ──
+    # L1 default: 500K USDT (backtest: +0.51% vs +0.09%, PF 2.13 vs 1.14)
+    M8_MIN_VOL_USDT,
+    M8_OBV_DIV_EXIT,
+    M8_OBV_DIV_BARS,
+    M8_OBV_DIV_RSI,
+    M8_OBV_DIV_NEAR,
+    M8_VOL_SPIKE_ENTRY,
+    M8_VOL_SPIKE_MULT,
     M7_SHARPE_LONG,
     M7_SHARPE_SHORT,
     M7_LONG_OWN_BULL,
@@ -139,6 +148,7 @@ class LiveEngine:
         m5_mode: bool = False,
         m6_mode: bool = False,
         m7_mode: bool = False,
+        m8_mode: bool = False,
     ):
         self.mode = mode
         self.symbols = symbols
@@ -149,11 +159,13 @@ class LiveEngine:
         self.m4_mode = m4_mode
         self.m5_mode = m5_mode
         self.m6_mode = m6_mode
-        self.m7_mode = m7_mode
+        self.m8_mode = m8_mode
+        # M8 = M7 klonu + hacim levers → m7_mode davranışını da alır
+        self.m7_mode = m7_mode or m8_mode
 
         self._warmup_days = WARMUP_DAYS.get(timeframe, 7)
-        # M7: trailing-Sharpe (14g) için daha uzun warmup çek (yalnız M7 instance'ı etkilenir).
-        if m7_mode:
+        # M7/M8: trailing-Sharpe (14g) için daha uzun warmup çek
+        if m7_mode or m8_mode:
             self._warmup_days = max(self._warmup_days, 15)
         self._bpd = _bars_per_day(timeframe)
 
@@ -342,6 +354,22 @@ class LiveEngine:
                     exit_price  = effective_stop
                     exit_reason = "trail_stop" if effective_stop == trail_px else "stop_loss"
 
+            # ── M8 LEVER 2 — OBV Divergence çıkışı (yalnız m8_mode, yalnız LONG) ──
+            if (not hit_stop and self.m8_mode and M8_OBV_DIV_EXIT
+                    and not is_short and "obv" in df.columns and "rsi" in df.columns):
+                _rsi8   = float(row.get("rsi", 0))
+                _high10 = float(df["high"].loc[:bar_ts].iloc[-10:].max()) if "high" in df.columns else price
+                _near   = price >= _high10 * M8_OBV_DIV_NEAR
+                _obv_s  = df["obv"].loc[:bar_ts].iloc[-(M8_OBV_DIV_BARS + 1):]
+                _obv_div = (len(_obv_s) > M8_OBV_DIV_BARS and
+                            all(_obv_s.iloc[i] > _obv_s.iloc[i+1] for i in range(len(_obv_s)-1)))
+                _ep     = float(pos_d.get("entry_price", price))
+                _profit = (_ep > 0) and ((price - _ep) / _ep >= 0.005)
+                if _near and _obv_div and _rsi8 >= M8_OBV_DIV_RSI and _profit:
+                    hit_stop    = True
+                    exit_price  = price
+                    exit_reason = "obv_divergence"
+
             if hit_stop:
                 # PnL hesapla
                 size = float(pos_d["size"])
@@ -488,6 +516,12 @@ class LiveEngine:
                 logger.debug(f"  Signal error {sym}: {e}")
                 continue
 
+            # ── M8 LEVER 1 — Likidite filtresi (yalnız m8_mode) ─────────────────
+            if self.m8_mode and M8_MIN_VOL_USDT > 0 and "volume_sma" in slice_df.columns:
+                _vsma = float(slice_df["volume_sma"].iloc[-1])
+                if not pd.isna(_vsma) and _vsma < M8_MIN_VOL_USDT:
+                    continue  # düşük likidite → atla
+
             # ── M7 #7 — HMA20 ERKEN GİRİŞ (yalnız m7_mode) ──────────────────────
             # Base sinyal HOLD'ken HMA20 yükselişe dönerse M7 ERKEN LONG açar (HMA, EMA200'den
             # ~%27 daha erken). Aşağıdaki Sharpe(#4) + karşı-trend(#10) kapıları yine uygulanır.
@@ -601,6 +635,14 @@ class LiveEngine:
 
             risk_amt  = balance * risk_pct * pos_mult
             # M7 #6 — λ-tilt: SHORT boyutunu kıs (kitabı LONG'a eğ → 6ay getiri↑, DD↓)
+            # ── M8 LEVER 3 — Volume Spike giriş teyidi (yalnız m8_mode, yalnız LONG) ──
+            if (self.m8_mode and M8_VOL_SPIKE_ENTRY and not is_short_signal
+                    and "volume" in slice_df.columns and "volume_sma" in slice_df.columns):
+                _v   = float(slice_df["volume"].iloc[-1])
+                _vma = float(slice_df["volume_sma"].iloc[-1])
+                if not pd.isna(_vma) and _vma > 0 and _v < _vma * M8_VOL_SPIKE_MULT:
+                    continue  # hacim spike yok → atla
+
             if self.m7_mode and is_short_signal and M7_LAMBDA_TILT < 1.0:
                 risk_amt *= M7_LAMBDA_TILT
             if is_short_signal:
