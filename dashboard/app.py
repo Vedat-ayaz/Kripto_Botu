@@ -111,20 +111,28 @@ def inject_styles() -> None:
             background: linear-gradient(180deg, {PALETTE["card"]} 0%, {PALETTE["card_alt"]} 100%);
             border: 1px solid {PALETTE["border"]};
             border-radius: 22px;
-            padding: 16px 18px;
+            padding: 14px 12px;
             box-shadow: 0 16px 40px rgba(16, 35, 63, 0.06);
           }}
 
           div[data-testid="metric-container"] label {{
             color: {PALETTE["muted"]} !important;
-            font-size: 0.78rem !important;
-            letter-spacing: 0.02em;
+            font-size: 0.74rem !important;
+            letter-spacing: 0.01em;
           }}
 
+          /* 8 metrik tek satıra sığsın: değer punto'su küçük + tek satır, kesilme/üç nokta yok */
           div[data-testid="metric-container"] [data-testid="stMetricValue"] {{
             color: {PALETTE["ink"]} !important;
-            font-size: 1.45rem !important;
+            font-size: 1.05rem !important;
             font-weight: 800;
+            letter-spacing: -0.02em;
+            white-space: nowrap;
+            overflow: visible;
+          }}
+          div[data-testid="metric-container"] [data-testid="stMetricValue"] > div {{
+            overflow: visible !important;
+            text-overflow: clip !important;
           }}
 
           .stTabs [data-baseweb="tab-list"] {{
