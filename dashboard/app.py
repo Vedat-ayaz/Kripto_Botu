@@ -968,6 +968,9 @@ def build_model_summary(name: str, state: dict[str, Any] | None) -> dict[str, An
     free_cash  = safe_float(state.get("balance"), final_balance)
     open_value = compute_open_position_value(state)
     equity     = free_cash + open_value
+    # Equity getirisi = (toplam sermaye / başlangıç − 1). total_pnl_pct SADECE realize kârdır;
+    # equity_return realize + açık (unrealized) kârı birlikte içerir → gösterilen Bakiye ile tutarlı.
+    equity_return = ((equity / initial_capital - 1) * 100) if initial_capital else 0.0
     run_dt = parse_timestamp(state.get("run_time"))
 
     if not trade_df.empty:
@@ -1001,6 +1004,7 @@ def build_model_summary(name: str, state: dict[str, Any] | None) -> dict[str, An
         "free_cash": free_cash,
         "open_value": open_value,
         "equity": equity,
+        "equity_return": equity_return,
         "total_pnl": total_pnl,
         "return_pct": return_pct,
         "drawdown_pct": drawdown_pct,
@@ -1199,10 +1203,11 @@ def render_top_metrics(
     m5_balance = _model_equity(m5)
     m6_balance = _model_equity(m6)
     m7_balance = _model_equity(m7)
-    m4_return = safe_float(m4.get("return_pct"))
-    m5_return = safe_float(m5.get("return_pct"))
-    m6_return = safe_float(m6.get("return_pct"))
-    m7_return = safe_float(m7.get("return_pct"))
+    # Yüzde = equity getirisi (realize + açık K/Z) → gösterilen Bakiye($) ile tutarlı.
+    m4_return = safe_float(m4.get("equity_return"), safe_float(m4.get("return_pct")))
+    m5_return = safe_float(m5.get("equity_return"), safe_float(m5.get("return_pct")))
+    m6_return = safe_float(m6.get("equity_return"), safe_float(m6.get("return_pct")))
+    m7_return = safe_float(m7.get("equity_return"), safe_float(m7.get("return_pct")))
     total_balance = m4_balance + m5_balance + m6_balance + m7_balance
     total_initial = (
         safe_float(m4.get("initial_capital"), 1000.0)
@@ -1212,11 +1217,11 @@ def render_top_metrics(
     )
     total_pnl = total_balance - total_initial
 
-    # 4 model arasından en yüksek total_pnl'i seç
+    # 4 model arasından en yüksek equity (toplam sermaye) olanı seç
     _candidates = [("M4", m4), ("M5", m5), ("M6", m6), ("M7", m7)]
-    best_name, best_dict = max(_candidates, key=lambda x: safe_float(x[1].get("total_pnl")))
+    best_name, best_dict = max(_candidates, key=lambda x: _model_equity(x[1]))
     best_model = best_name
-    best_model_return = safe_float(best_dict.get("return_pct"))
+    best_model_return = safe_float(best_dict.get("equity_return"), safe_float(best_dict.get("return_pct")))
 
     cols = st.columns(8)
     cols[0].metric("M4 Bakiye", format_money(m4_balance), format_pct(m4_return), delta_color=style_metric_delta(m4_return))
@@ -1946,16 +1951,20 @@ def render_model_summary_card(model: dict[str, Any], accent: str, subtitle: str)
     pf_value = model["profit_factor"]
     pf_text = "inf" if math.isinf(pf_value) else f"{pf_value:.2f}"
 
-    # Bakiye dağılımı hesabı
+    # Bakiye dağılımı: Bakiye(equity) = serbest nakit + açık pozisyonların GÜNCEL DEĞERİ.
+    # Pozisyon değerleri maliyet + açık K/Z (unrealized) içerir → Serbest nakit + LONG + SHORT = Bakiye.
     state       = model.get("state") or {}
     free_cash   = safe_float(state.get("balance"))
     open_pos    = state.get("open_positions", []) or []
-    long_cost   = 0.0   # LONG: tam maliyet (fill_price × size)
-    short_mrgn  = 0.0   # SHORT: sadece marjin (risk miktarı)
+    long_val    = 0.0   # LONG: güncel piyasa değeri (maliyet + açık K/Z)
+    short_val   = 0.0   # SHORT: equity katkısı (marjin + açık K/Z)
+    open_upnl   = 0.0   # toplam açık (gerçekleşmemiş) K/Z
     n_long = n_short = 0
     for p in open_pos:
         ep   = safe_float(p.get("entry_price"))
         size = safe_float(p.get("size"))
+        upnl = safe_float(p.get("unrealized_pnl", 0))
+        open_upnl += upnl
         if p.get("is_short", False):
             n_short += 1
             margin = safe_float(p.get("margin_locked", 0))
@@ -1964,36 +1973,30 @@ def render_model_summary_card(model: dict[str, Any], accent: str, subtitle: str)
                 trail = safe_float(p.get("trail_price", 0))
                 ref   = max(stop, trail)
                 margin = abs(ref - ep) * size if ref > ep else ep * size * 0.02
-            short_mrgn += margin
+            short_val += margin + upnl
         else:
             n_long += 1
             cost = safe_float(p.get("cost", 0))
-            long_cost += cost if cost > 1.0 else ep * size
+            if cost <= 1.0:
+                cost = ep * size
+            long_val += cost + upnl
 
-    # Notional toplamı (tüm pozisyonlar)
-    short_notional = sum(
-        safe_float(p.get("cost", 0)) or safe_float(p.get("entry_price", 0)) * safe_float(p.get("size", 0))
-        for p in open_pos if p.get("is_short", False)
-    )
-
-    # Pozisyon satırını oluştur
+    # Pozisyon satırı — değerler GÜNCEL (maliyet + açık K/Z), böylece nakit + pozisyon = Bakiye
     pos_parts = []
     if n_long > 0:
-        pos_parts.append(f"📈 LONG: {format_money(long_cost)}")
+        pos_parts.append(f"📈 LONG ({n_long}): {format_money(long_val)}")
     if n_short > 0:
-        pos_parts.append(
-            f"📉 SHORT: {format_money(short_notional)} "
-            f"<span style='color:#9ca3af'>(marjin: {format_money(short_mrgn)})</span>"
-        )
+        pos_parts.append(f"📉 SHORT ({n_short}): {format_money(short_val)}")
     if not pos_parts:
         pos_parts.append("Pozisyon yok")
-    pos_line = " &nbsp;|&nbsp; ".join(pos_parts)
+    pos_line  = " &nbsp;|&nbsp; ".join(pos_parts)
+    upnl_txt  = f" &nbsp;|&nbsp; Açık K/Z: {format_money(open_upnl)}" if open_pos else ""
 
     st.markdown(
         f"""
         <div class="panel" style="border-top: 6px solid {accent};">
           <div class="panel-title">{model["name"]} · {subtitle}</div>
-          <div class="panel-big">{format_pct(model["return_pct"])}</div>
+          <div class="panel-big">{format_pct(model.get("equity_return", model.get("return_pct", 0.0)))}</div>
           <div class="panel-copy">
             Bakiye {format_money(_model_equity(model))} ·
             Max DD {model["drawdown_pct"]:.1f}% ·
@@ -2001,7 +2004,7 @@ def render_model_summary_card(model: dict[str, Any], accent: str, subtitle: str)
             PF {pf_text}
           </div>
           <div class="panel-copy" style="margin-top:0.4rem; font-size:0.82rem; color:#6b7280;">
-            💰 Serbest nakit: {format_money(free_cash)} &nbsp;|&nbsp; {pos_line}
+            💰 Serbest nakit: {format_money(free_cash)} &nbsp;|&nbsp; {pos_line}{upnl_txt}
           </div>
           <div class="badge-row" style="margin-top:0.8rem">
             <span class="badge badge-neutral">{model["trade_count"]} islem</span>
