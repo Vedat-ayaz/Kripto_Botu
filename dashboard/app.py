@@ -1239,10 +1239,29 @@ def render_top_metrics(
     cols[2].metric("M6 Bakiye", format_money(m6_balance, 0), format_pct(m6_return), delta_color=style_metric_delta(m6_return))
     cols[3].metric("M7 Bakiye", format_money(m7_balance, 0), format_pct(m7_return), delta_color=style_metric_delta(m7_return))
     cols[4].metric("Acik Pozisyon", str(len(open_positions)), f"{trade_count} kapali islem")
-    # Piyasa Nefesi: delta (yükselen/düşen sayısı) piyasa yönüne göre renklendirilir.
-    # avg_change < 0 → piyasa eksi → delta kırmızı; avg_change ≥ 0 → yeşil.
-    _breadth_delta = f"{breadth['gainers']} yukselen / {breadth['losers']} dusen"
-    cols[5].metric("Piyasa Nefesi", format_pct(breadth["avg_change"]), _breadth_delta, delta_color=style_metric_delta(breadth["avg_change"]))
+    # Piyasa Nefesi: yükselen ▲ yeşil, düşen ▼ kırmızı ayrı renk — st.metric tek renk
+    # desteklediğinden custom HTML kart kullanılır (metric kutusu stiliyle uyumlu).
+    _avg = breadth["avg_change"]
+    _avg_color = "#12b886" if _avg >= 0 else "#ff5a5f"
+    cols[5].markdown(
+        f"""
+        <div data-testid="stMetric" style="
+            background:linear-gradient(180deg,#ffffff 0%,#f8fbff 100%);
+            border:1px solid #d7e2ef; border-radius:18px;
+            padding:12px 10px; box-shadow:0 16px 40px rgba(16,35,63,0.06);
+        ">
+          <p style="color:#667892;font-size:0.74rem;margin:0 0 4px">Piyasa Nefesi</p>
+          <p style="color:#10233f;font-size:1.0rem;font-weight:800;
+                    letter-spacing:-0.03em;margin:0 0 6px">{format_pct(_avg)}</p>
+          <p style="margin:0;font-size:0.80rem;font-weight:700;letter-spacing:-0.01em">
+            <span style="color:#12b886">▲ {breadth['gainers']}</span>
+            &nbsp;&nbsp;
+            <span style="color:#ff5a5f">▼ {breadth['losers']}</span>
+          </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     cols[6].metric("Toplam Sermaye", format_money(total_balance, 0), format_money(total_pnl), delta_color=style_metric_delta(total_pnl))
 
 
