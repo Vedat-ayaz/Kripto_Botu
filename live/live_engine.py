@@ -51,6 +51,20 @@ from crypto_portfolio_test import (
     MIN_ORDER_SIZE,
     _bars_per_day,
     _tf_to_minutes,
+    # ── M7 (AdaptiveTrend) yardımcıları + sabitleri — yalnız m7_mode altında kullanılır ──
+    _hma,
+    _coin_trailing_sharpe,
+    M7_SHARPE_LONG,
+    M7_SHARPE_SHORT,
+    M7_LONG_OWN_BULL,
+    M7_CHANDELIER,
+    M7_CHAND_N,
+    M7_CHAND_MULT,
+    M7_BREAKEVEN_ON,
+    M7_BE_TRIGGER,
+    M7_LAMBDA_TILT,
+    M7_HMA_PERIOD,
+    M7_SHORTS_LIKE_M5,
 )
 from strategy.signal import Side
 from indicators.technical_indicators import TechnicalIndicators
@@ -124,6 +138,7 @@ class LiveEngine:
         m4_mode: bool = False,
         m5_mode: bool = False,
         m6_mode: bool = False,
+        m7_mode: bool = False,
     ):
         self.mode = mode
         self.symbols = symbols
@@ -134,8 +149,12 @@ class LiveEngine:
         self.m4_mode = m4_mode
         self.m5_mode = m5_mode
         self.m6_mode = m6_mode
+        self.m7_mode = m7_mode
 
         self._warmup_days = WARMUP_DAYS.get(timeframe, 7)
+        # M7: trailing-Sharpe (14g) için daha uzun warmup çek (yalnız M7 instance'ı etkilenir).
+        if m7_mode:
+            self._warmup_days = max(self._warmup_days, 15)
         self._bpd = _bars_per_day(timeframe)
 
         # Adaptive regime controller (her tick'te güncellenir)
@@ -268,10 +287,23 @@ class LiveEngine:
             # ── Trailing stop güncelle ────────────────────────────────────
             if not is_short:
                 # LONG: trail_price YUKARI gider, asla aşağı gelmez
-                new_trail = high_px - trail_mlt * atr
+                if self.m7_mode and M7_CHANDELIER and "high" in df.columns:
+                    # M7 #16 — CHANDELIER EXIT (LeBeau): trail = en-yüksek-tepe(N) − ATR×mult.
+                    # Tepeye sabit → pullback'te gevşemez; M7'yi kâra geçiren ana iyileştirme.
+                    _hh = float(df["high"].loc[:bar_ts].iloc[-M7_CHAND_N:].max())
+                    new_trail = _hh - M7_CHAND_MULT * atr
+                else:
+                    new_trail = high_px - trail_mlt * atr
                 if new_trail > trail_px:
                     trail_px = new_trail
                     pos_d["trail_price"] = trail_px
+                # M7 #15 — BREAKEVEN STOP: +M7_BE_TRIGGER kârdan sonra stop'u GİRİŞE çek
+                # (kâr artık zarara dönemez; pullback'te kesmez). Sadece yukarı taşır.
+                if self.m7_mode and M7_BREAKEVEN_ON:
+                    _entry = float(pos_d["entry_price"])
+                    if _entry > 0 and (price - _entry) / _entry >= M7_BE_TRIGGER and _entry > stop_px:
+                        stop_px = _entry
+                        pos_d["stop_price"] = _entry
             else:
                 # SHORT: trail_price AŞAĞI gider
                 new_trail = low_px + trail_mlt * atr
@@ -456,9 +488,42 @@ class LiveEngine:
                 logger.debug(f"  Signal error {sym}: {e}")
                 continue
 
-            is_short_signal = signal.side == Side.SHORT
-            if signal.side not in (Side.BUY, Side.SHORT):
+            # ── M7 #7 — HMA20 ERKEN GİRİŞ (yalnız m7_mode) ──────────────────────
+            # Base sinyal HOLD'ken HMA20 yükselişe dönerse M7 ERKEN LONG açar (HMA, EMA200'den
+            # ~%27 daha erken). Aşağıdaki Sharpe(#4) + karşı-trend(#10) kapıları yine uygulanır.
+            _m7_hma_early = False
+            if self.m7_mode and signal.side not in (Side.BUY, Side.SHORT):
+                try:
+                    _hm = _hma(slice_df["close"], M7_HMA_PERIOD)
+                    if len(_hm) > 6:
+                        _h_now, _h_prev = float(_hm.iloc[-1]), float(_hm.iloc[-4])
+                        _pclose = float(slice_df["close"].iloc[-2])
+                        if (not pd.isna(_h_now) and not pd.isna(_h_prev)
+                                and _h_now > _h_prev and price > _h_now and price > _pclose):
+                            _m7_hma_early = True
+                except Exception:
+                    pass
+
+            is_short_signal = (signal.side == Side.SHORT) and not _m7_hma_early
+            if signal.side not in (Side.BUY, Side.SHORT) and not _m7_hma_early:
                 continue
+
+            # ── M7 #4/#10/#6 — coin seçimi (yalnız m7_mode; M4/M5/M6 KOD YOLU DOKUNULMAZ) ──
+            if self.m7_mode:
+                if not is_short_signal:
+                    # #10 KARŞI-TREND LONG FİLTRESİ: LONG yalnız coin kendi EMA200 üstündeyken aç
+                    if M7_LONG_OWN_BULL and not coin_own_bull:
+                        continue
+                    # #4 LONG trailing-Sharpe kapısı: düzgün risk-ayarlı uptrend → choppy coini ele
+                    _shp = _coin_trailing_sharpe(slice_df, self._bpd)
+                    if not pd.isna(_shp) and _shp < M7_SHARPE_LONG:
+                        continue
+                else:
+                    # #4 SHORT trailing-Sharpe kapısı (M7_SHORTS_LIKE_M5=0 → seçici short)
+                    if not M7_SHORTS_LIKE_M5:
+                        _shp = _coin_trailing_sharpe(slice_df, self._bpd)
+                        if not pd.isna(_shp) and _shp > -M7_SHARPE_SHORT:
+                            continue
 
             # ── Bear rejim filtresi (sinyal türü artık biliniyor) ─────────
             if in_strong_bear:
@@ -483,7 +548,8 @@ class LiveEngine:
             ema50_col = next(
                 (c for c in ("ema_50", "ema50", "ema_fast") if c in slice_df.columns), None
             )
-            if not is_short_signal:
+            if not is_short_signal and not _m7_hma_early:
+                # HMA-erken girişte ATLA (HMA zaten EMA50'den önce yükselişi onaylar → erken giriş)
                 if ema50_col and len(slice_df) >= ema50_confirm_bars:
                     last_n = slice_df.tail(ema50_confirm_bars)
                     if not (last_n["close"] > last_n[ema50_col]).all():
@@ -513,7 +579,8 @@ class LiveEngine:
 
             # M5: M4'e göre daha agresif pozisyon boyutu (backtest farkını live'a taşı)
             # M4: konservatif (defansif), M5: agresif (momentum odaklı, büyük upside)
-            if self.m5_mode:
+            if self.m5_mode or self.m7_mode:
+                # M7 = M5-klon taban → aynı agresif boyutlandırma (M7 farkı: seçicilik + çıkışlar)
                 risk_pct    *= 1.25   # %25 daha büyük risk
                 max_pos_pct *= 1.30   # %30 daha geniş pozisyon limiti
 
@@ -533,6 +600,9 @@ class LiveEngine:
                 risk_pct    *= 0.5
 
             risk_amt  = balance * risk_pct * pos_mult
+            # M7 #6 — λ-tilt: SHORT boyutunu kıs (kitabı LONG'a eğ → 6ay getiri↑, DD↓)
+            if self.m7_mode and is_short_signal and M7_LAMBDA_TILT < 1.0:
+                risk_amt *= M7_LAMBDA_TILT
             if is_short_signal:
                 stop_px   = price + atr_stop * atr
                 stop_dist = max(stop_px - price, price * 0.001)

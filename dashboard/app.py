@@ -70,6 +70,7 @@ STATE_DIR = PROJECT_ROOT / "live" / "state"
 M4_STATE_PATH = STATE_DIR / "m4_state.json"
 M5_STATE_PATH = STATE_DIR / "m5_state.json"
 M6_STATE_PATH = STATE_DIR / "m6_state.json"
+M7_STATE_PATH = STATE_DIR / "m7_state.json"
 LOCAL_TZ = datetime.now().astimezone().tzinfo or timezone.utc
 DB = BotStateDB()
 
@@ -909,6 +910,34 @@ def prepare_state_trades(trades: list[dict[str, Any]]) -> pd.DataFrame:
     return df
 
 
+def compute_open_position_value(state: dict[str, Any] | None) -> float:
+    """Açık pozisyonların toplam güncel değeri ($).
+
+    LONG  → coine giren para hâlâ "sermaye": maliyet + anlık kâr/zarar (≈ güncel piyasa değeri).
+    SHORT → bakiyeden kilitlenen marjin + anlık kâr/zarar.
+    Bu değer serbest nakde eklenince GERÇEK toplam sermaye (equity) elde edilir; böylece
+    pozisyondayken (coinde para varken) toplam sermaye düşük/eksi görünmez.
+    """
+    if not state:
+        return 0.0
+    total = 0.0
+    for p in state.get("open_positions", []) or []:
+        upnl = safe_float(p.get("unrealized_pnl"), 0.0)
+        size = safe_float(p.get("size"))
+        ep   = safe_float(p.get("entry_price"))
+        if p.get("is_short", False):
+            locked = safe_float(p.get("margin_locked"), 0.0)
+            if locked < 0.01:
+                locked = safe_float(p.get("cost"), 0.0) or ep * size
+            total += locked + upnl
+        else:
+            cost = safe_float(p.get("cost"), 0.0)
+            if cost < 1.0:
+                cost = ep * size
+            total += cost + upnl
+    return total
+
+
 def build_model_summary(name: str, state: dict[str, Any] | None) -> dict[str, Any]:
     if not state:
         return {
@@ -933,6 +962,12 @@ def build_model_summary(name: str, state: dict[str, Any] | None) -> dict[str, An
     trade_count = safe_int(state.get("total_trades")) or len(state.get("closed_trades", []))
     open_positions = state.get("open_positions", []) or []
     final_balance = safe_float(state.get("final_balance"), initial_capital + total_pnl)
+    # GERÇEK toplam sermaye (equity) = serbest nakit + açık pozisyonların değeri.
+    # final_balance/balance sadece SERBEST NAKİT'tir (LONG'da coine giren para düşülür);
+    # pozisyondaki para da sermaye olduğu için onu geri ekliyoruz → "eksi/düşük sermaye" görünümü çözülür.
+    free_cash  = safe_float(state.get("balance"), final_balance)
+    open_value = compute_open_position_value(state)
+    equity     = free_cash + open_value
     run_dt = parse_timestamp(state.get("run_time"))
 
     if not trade_df.empty:
@@ -963,6 +998,9 @@ def build_model_summary(name: str, state: dict[str, Any] | None) -> dict[str, An
         "trade_df": trade_df,
         "initial_capital": initial_capital,
         "final_balance": final_balance,
+        "free_cash": free_cash,
+        "open_value": open_value,
+        "equity": equity,
         "total_pnl": total_pnl,
         "return_pct": return_pct,
         "drawdown_pct": drawdown_pct,
@@ -1132,6 +1170,15 @@ def render_hero(
         )
 
 
+def _model_equity(model: dict[str, Any]) -> float:
+    """Model için GERÇEK toplam sermaye (equity = serbest nakit + açık pozisyon değeri).
+    equity yoksa final_balance, o da yoksa initial_capital'a düşer (geriye dönük uyumlu)."""
+    return safe_float(
+        model.get("equity"),
+        safe_float(model.get("final_balance"), safe_float(model.get("initial_capital"), 1000.0)),
+    )
+
+
 def render_top_metrics(
     *,
     snapshot: dict[str, Any],
@@ -1139,41 +1186,47 @@ def render_top_metrics(
     m4: dict[str, Any],
     m5: dict[str, Any],
     m6: dict[str, Any],
+    m7: dict[str, Any],
 ) -> None:
     open_positions = snapshot.get("open_positions") or []
     closed = snapshot.get("closed") or []
     stats = snapshot.get("stats") or {}
     trade_count = safe_int(stats.get("total"), len(closed))
 
-    # Her bot ayrı sermaye ile başlar; final_balance state JSON'unda saklanıyor
-    m4_balance = safe_float(m4.get("final_balance"), safe_float(m4.get("initial_capital"), 1000.0))
-    m5_balance = safe_float(m5.get("final_balance"), safe_float(m5.get("initial_capital"), 1000.0))
-    m6_balance = safe_float(m6.get("final_balance"), safe_float(m6.get("initial_capital"), 1000.0))
+    # Her bot ayrı $1000 ile başlar. GÖSTERİLEN BAKİYE = equity (serbest nakit + açık pozisyon
+    # değeri) → LONG'dayken coine giren para da sayılır; "eksi/düşük sermaye" görünümü çözülür.
+    m4_balance = _model_equity(m4)
+    m5_balance = _model_equity(m5)
+    m6_balance = _model_equity(m6)
+    m7_balance = _model_equity(m7)
     m4_return = safe_float(m4.get("return_pct"))
     m5_return = safe_float(m5.get("return_pct"))
     m6_return = safe_float(m6.get("return_pct"))
-    total_balance = m4_balance + m5_balance + m6_balance
+    m7_return = safe_float(m7.get("return_pct"))
+    total_balance = m4_balance + m5_balance + m6_balance + m7_balance
     total_initial = (
         safe_float(m4.get("initial_capital"), 1000.0)
         + safe_float(m5.get("initial_capital"), 1000.0)
         + safe_float(m6.get("initial_capital"), 1000.0)
+        + safe_float(m7.get("initial_capital"), 1000.0)
     )
     total_pnl = total_balance - total_initial
 
-    # 3 model arasından en yüksek total_pnl'i seç
-    _candidates = [("M4", m4), ("M5", m5), ("M6", m6)]
+    # 4 model arasından en yüksek total_pnl'i seç
+    _candidates = [("M4", m4), ("M5", m5), ("M6", m6), ("M7", m7)]
     best_name, best_dict = max(_candidates, key=lambda x: safe_float(x[1].get("total_pnl")))
     best_model = best_name
     best_model_return = safe_float(best_dict.get("return_pct"))
 
-    cols = st.columns(7)
+    cols = st.columns(8)
     cols[0].metric("M4 Bakiye", format_money(m4_balance), format_pct(m4_return), delta_color=style_metric_delta(m4_return))
     cols[1].metric("M5 Bakiye", format_money(m5_balance), format_pct(m5_return), delta_color=style_metric_delta(m5_return))
     cols[2].metric("M6 Bakiye", format_money(m6_balance), format_pct(m6_return), delta_color=style_metric_delta(m6_return))
-    cols[3].metric("Acik Pozisyon", str(len(open_positions)), f"{trade_count} kapali islem")
-    cols[4].metric("Piyasa Nefesi", format_pct(breadth["avg_change"]), f"{breadth['gainers']} / {breadth['losers']}", delta_color=style_metric_delta(breadth["avg_change"]))
-    cols[5].metric("Onde Model", best_model, format_pct(best_model_return), delta_color=style_metric_delta(best_model_return))
-    cols[6].metric("Toplam Sermaye", format_money(total_balance), format_money(total_pnl), delta_color=style_metric_delta(total_pnl))
+    cols[3].metric("M7 Bakiye", format_money(m7_balance), format_pct(m7_return), delta_color=style_metric_delta(m7_return))
+    cols[4].metric("Acik Pozisyon", str(len(open_positions)), f"{trade_count} kapali islem")
+    cols[5].metric("Piyasa Nefesi", format_pct(breadth["avg_change"]), f"{breadth['gainers']} / {breadth['losers']}", delta_color=style_metric_delta(breadth["avg_change"]))
+    cols[6].metric("Onde Model", best_model, format_pct(best_model_return), delta_color=style_metric_delta(best_model_return))
+    cols[7].metric("Toplam Sermaye", format_money(total_balance), format_money(total_pnl), delta_color=style_metric_delta(total_pnl))
 
 
 def render_section_header(title: str, copy: str, right: str = "") -> None:
@@ -1361,13 +1414,14 @@ def render_open_positions_allocation(
     m4: dict[str, Any],
     m5: dict[str, Any],
     m6: dict[str, Any],
+    m7: dict[str, Any],
 ) -> None:
     """
     Açık pozisyonlar: hangi coin, kaç dolar yatırıldı.
     Sade kart formatı — model adı, coin adı, $ tutarı.
     """
     all_positions: list[dict] = []
-    for model in [m4, m5, m6]:
+    for model in [m4, m5, m6, m7]:
         if not model.get("available"):
             continue
         for pos in model.get("open_positions", []):
@@ -1709,6 +1763,7 @@ def render_overview_tab(
     m4: dict[str, Any],
     m5: dict[str, Any],
     m6: dict[str, Any],
+    m7: dict[str, Any],
     market_rows: list[dict[str, Any]],
     signal_map: dict[str, dict[str, Any]],
 ) -> None:
@@ -1723,7 +1778,7 @@ def render_overview_tab(
         '<div class="panel-title" style="margin-bottom:0.3rem">Açık Pozisyonlar</div>',
         unsafe_allow_html=True,
     )
-    render_open_positions_allocation(m4, m5, m6)
+    render_open_positions_allocation(m4, m5, m6, m7)
 
     left, right = st.columns([7, 5])
     with left:
@@ -1940,7 +1995,7 @@ def render_model_summary_card(model: dict[str, Any], accent: str, subtitle: str)
           <div class="panel-title">{model["name"]} · {subtitle}</div>
           <div class="panel-big">{format_pct(model["return_pct"])}</div>
           <div class="panel-copy">
-            Bakiye {format_money(model["final_balance"])} ·
+            Bakiye {format_money(_model_equity(model))} ·
             Max DD {model["drawdown_pct"]:.1f}% ·
             WR {model["win_rate"]:.1f}% ·
             PF {pf_text}
@@ -1977,7 +2032,7 @@ def render_state_trade_table(model: dict[str, Any], limit: int = 12) -> None:
     st.dataframe(show, use_container_width=True, hide_index=True)
 
 
-def render_coin_benchmark_tab(m4: dict[str, Any], m5: dict[str, Any], m6: dict[str, Any]) -> None:
+def render_coin_benchmark_tab(m4: dict[str, Any], m5: dict[str, Any], m6: dict[str, Any], m7: dict[str, Any]) -> None:
     """v15: Bot başlatıldığı andan itibaren her coinin fiyat değişimini göster.
 
     Kullanıcı isteği: restart anından itibaren coinlerin değer artışını inceleme.
@@ -1992,7 +2047,7 @@ def render_coin_benchmark_tab(m4: dict[str, Any], m5: dict[str, Any], m6: dict[s
     # Veri kaynagi — M5 öncelikli
     benchmarks: list[dict] = []
     source_label = ""
-    for model, label in [(m5, "M5"), (m4, "M4"), (m6, "M6")]:
+    for model, label in [(m5, "M5"), (m7, "M7"), (m4, "M4"), (m6, "M6")]:
         state = (model or {}).get("state") or {}
         bm = state.get("coin_benchmarks") or []
         if bm:
@@ -2137,18 +2192,20 @@ def render_model_symbol_comparison(m4: dict[str, Any], m5: dict[str, Any]) -> No
     st.plotly_chart(fig, use_container_width=True)
 
 
-def render_models_tab(m4: dict[str, Any], m5: dict[str, Any], m6: dict[str, Any]) -> None:
+def render_models_tab(m4: dict[str, Any], m5: dict[str, Any], m6: dict[str, Any], m7: dict[str, Any]) -> None:
     render_section_header(
-        "M4 / M5 / M6 Derin Karsilastirma",
+        "M4 / M5 / M6 / M7 Derin Karsilastirma",
         "Ayni donemde hangi model daha temiz, daha guclu ve daha verimli calismis gorebil.",
     )
-    card_m4, card_m5, card_m6 = st.columns(3)
+    card_m4, card_m5, card_m6, card_m7 = st.columns(4)
     with card_m4:
         render_model_summary_card(m4, PALETTE["primary"], "Stabil referans")
     with card_m5:
         render_model_summary_card(m5, PALETTE["success"], "Risk dengeli")
     with card_m6:
         render_model_summary_card(m6, PALETTE["warning"], "Agresif M6")
+    with card_m7:
+        render_model_summary_card(m7, "#e879f9", "Seçici trend (M7)")
 
     render_section_header(
         "Sembol Bazli Model Farki",
@@ -2156,7 +2213,7 @@ def render_models_tab(m4: dict[str, Any], m5: dict[str, Any], m6: dict[str, Any]
     )
     render_model_symbol_comparison(m4, m5)
 
-    trade_m4, trade_m5, trade_m6 = st.columns(3)
+    trade_m4, trade_m5, trade_m6, trade_m7 = st.columns(4)
     with trade_m4:
         st.markdown("##### M4 Acik Pozisyonlar")
         render_state_open_positions(m4.get("state"))
@@ -2172,6 +2229,11 @@ def render_models_tab(m4: dict[str, Any], m5: dict[str, Any], m6: dict[str, Any]
         render_state_open_positions(m6.get("state"))
         st.markdown("##### M6 Son Islemler")
         render_state_trade_table(m6)
+    with trade_m7:
+        st.markdown("##### M7 Acik Pozisyonlar")
+        render_state_open_positions(m7.get("state"))
+        st.markdown("##### M7 Son Islemler")
+        render_state_trade_table(m7)
 
     # v14: Detayli islem gecmisi — her model icin ayri tablo
     # Kullanici istegi: kripto, adet, alis/satis tarihi (dakika cinsi), kar/zarar durumu
@@ -2185,6 +2247,8 @@ def render_models_tab(m4: dict[str, Any], m5: dict[str, Any], m6: dict[str, Any]
     render_state_detailed_trade_table(m5)
     st.markdown("##### M6 — Detayli Islem Gecmisi")
     render_state_detailed_trade_table(m6)
+    st.markdown("##### M7 — Detayli Islem Gecmisi")
+    render_state_detailed_trade_table(m7)
 
 
 def render_active_positions(open_positions: list[dict[str, Any]]) -> None:
@@ -2747,8 +2811,9 @@ def main() -> None:
         m4 = build_model_summary("M4", load_model_state(str(M4_STATE_PATH)))
         m5 = build_model_summary("M5", load_model_state(str(M5_STATE_PATH)))
         m6 = build_model_summary("M6", load_model_state(str(M6_STATE_PATH)))
+        m7 = build_model_summary("M7", load_model_state(str(M7_STATE_PATH)))
         exchange_name = ((config.get("exchange") or {}).get("name") or "binance").lower()
-        watchlist = build_watchlist(config, [m4, m5, m6])
+        watchlist = build_watchlist(config, [m4, m5, m6, m7])
         market_rows = fetch_market_snapshot(tuple(watchlist), exchange_name) if watchlist else []
         breadth = market_breadth(market_rows)
         signal_df = prepare_signal_df(snapshot.get("signals") or [])
@@ -2761,7 +2826,7 @@ def main() -> None:
             m5=m5,
             bot_status=snapshot.get("status"),
         )
-        render_top_metrics(snapshot=snapshot, breadth=breadth, m4=m4, m5=m5, m6=m6)
+        render_top_metrics(snapshot=snapshot, breadth=breadth, m4=m4, m5=m5, m6=m6, m7=m7)
 
         tabs = st.tabs(
             [
@@ -2780,6 +2845,7 @@ def main() -> None:
                 m4=m4,
                 m5=m5,
                 m6=m6,
+                m7=m7,
                 market_rows=market_rows,
                 signal_map=signal_map,
             )
@@ -2791,9 +2857,9 @@ def main() -> None:
                 watchlist=watchlist,
             )
         with tabs[2]:
-            render_models_tab(m4, m5, m6)
+            render_models_tab(m4, m5, m6, m7)
         with tabs[3]:
-            render_coin_benchmark_tab(m4, m5, m6)
+            render_coin_benchmark_tab(m4, m5, m6, m7)
         with tabs[4]:
             render_execution_tab(snapshot)
         with tabs[5]:

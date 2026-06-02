@@ -47,6 +47,7 @@ STATE_DIR    = _ROOT / "live" / "state"
 M4_STATE     = str(STATE_DIR / "m4_state.json")
 M5_STATE     = str(STATE_DIR / "m5_state.json")
 M6_STATE     = str(STATE_DIR / "m6_state.json")
+M7_STATE     = str(STATE_DIR / "m7_state.json")
 CONFIG_FILE  = STATE_DIR / "config.json"
 DB_PATH      = str(_ROOT / "dashboard" / "bot_state.db")
 SNAPSHOT_DIR = _ROOT / "logs" / "snapshots"
@@ -80,7 +81,7 @@ def _save_config(cfg: dict) -> None:
 def _fresh_start(capital: float, coins: int) -> None:
     """Tüm state'i sil ve sıfırdan başla."""
     print("\n🔄 SIFIRDAN BAŞLATILIYOR...")
-    for f in [M4_STATE, M5_STATE, M6_STATE]:
+    for f in [M4_STATE, M5_STATE, M6_STATE, M7_STATE]:
         if Path(f).exists():
             Path(f).unlink()
             print(f"  🗑  Silindi: {f}")
@@ -163,7 +164,7 @@ def _save_snapshots() -> None:
     SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
     TRADES_LOG.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    for label, path in [("m4", M4_STATE), ("m5", M5_STATE), ("m6", M6_STATE)]:
+    for label, path in [("m4", M4_STATE), ("m5", M5_STATE), ("m6", M6_STATE), ("m7", M7_STATE)]:
         if not Path(path).exists():
             continue
         try:
@@ -254,6 +255,25 @@ def run_once(cfg: dict) -> None:
     except Exception as e:
         print(f"  ❌ M6 hata: {e}")
         logger.exception("M6 tick hata")
+
+    # ── M7 (15m, tüm UNIVERSE) — M5-klon + seçici trend iyileştirmeleri ───────
+    # (Sharpe-gate, #10 karşı-trend, Chandelier trail, breakeven, λ-tilt, HMA-erken)
+    # NOT: M5 DOKUNULMADI — M7 ayrı motor/ayrı state, M4/M5/M6 aynen devam eder.
+    print(f"\n🟪 M7 tick (15m, UNIVERSE — {len(UNIVERSE)} coin)...")
+    try:
+        engine_m7 = LiveEngine(
+            mode="M7",
+            symbols=UNIVERSE,
+            timeframe="15m",
+            capital=capital,
+            state_file=M7_STATE,
+            use_universe=True,
+            m7_mode=True,
+        )
+        engine_m7.tick()
+    except Exception as e:
+        print(f"  ❌ M7 hata: {e}")
+        logger.exception("M7 tick hata")
 
     # ── Dashboard güncelle ────────────────────────────────────────────────────
     print("\n📊 Dashboard güncelleniyor...")

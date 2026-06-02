@@ -59,35 +59,35 @@ _REGIME_TABLE: dict[Regime, RegimeParams] = {
         position_size_mult=0.25,
         entry_score_boost=+0.20,
         trailing_mult_boost=-0.5,
-        max_positions=5,
-        coin_tier=5,
+        max_positions=4,
+        coin_tier=7,   # v21: sadece güçlü 5 coin (AVAX+DOGE+BNB+LEO hariç)
     ),
     Regime.BEAR: RegimeParams(
-        position_size_mult=0.45,
+        position_size_mult=0.40,
         entry_score_boost=+0.12,
         trailing_mult_boost=-0.2,
-        max_positions=6,
-        coin_tier=5,
+        max_positions=4,
+        coin_tier=6,   # v21: AVAX+DOGE hariç — bu 2 coin BEAR'da tutarlı kaybettiriyor
     ),
     Regime.NEUTRAL: RegimeParams(
-        position_size_mult=0.55,   # v17: 0.80→0.55 — NEUTRAL'da trend yok, komisyon kaybı kıs
-        entry_score_boost=+0.08,   # v17: 0.03→0.08 — giriş eşiğini yükselt, kaliteli sinyal bekle
-        trailing_mult_boost=+0.0,
-        max_positions=6,           # v17: 8→6 — daha az eş zamanlı pozisyon
+        position_size_mult=0.38,   # v18: 0.55→0.38 — NEUTRAL'da neredeyse yok ol
+        entry_score_boost=+0.10,   # v18: 0.08→0.10 — daha seçici (max safe: 0.10 < 0.11 bear eşiği)
+        trailing_mult_boost=+0.3,  # v18: 0→+0.3 — giriş yapıyorsak daha geniş trailing (kazananı tut)
+        max_positions=4,           # v18: 6→4 — az ama öz
         coin_tier=5,
     ),
     Regime.BULL: RegimeParams(
-        position_size_mult=1.10,        # +10% büyük pozisyon
-        entry_score_boost=-0.03,        # hafifçe daha kolay giriş
-        trailing_mult_boost=+0.5,       # orta trailing → trendi tut ama aşırı geniş olma
-        max_positions=9,
+        position_size_mult=1.35,        # v19: 1.10→1.35 — boğada bold ol, fırsat kaçırma
+        entry_score_boost=-0.05,        # v19: daha gevşek giriş eşiği — boğada sinyallere güven
+        trailing_mult_boost=+1.0,       # v19: 0.5→1.0 — trendi uzun tut, erken çıkma
+        max_positions=10,               # v19: 9→10 — boğada paralel pozisyon artır
         coin_tier=5,
     ),
     Regime.STRONG_BULL: RegimeParams(
-        position_size_mult=1.20,        # +20% büyük pozisyon
-        entry_score_boost=-0.06,        # daha kolay giriş
-        trailing_mult_boost=+1.0,       # geniş trailing → güçlü trendi yakala
-        max_positions=10,
+        position_size_mult=1.60,        # v19: 1.20→1.60 — güçlü boğada agresif kal
+        entry_score_boost=-0.08,        # v19: daha kolay giriş
+        trailing_mult_boost=+1.5,       # v19: 1.0→1.5 — güçlü trendi sonuna kadar sür
+        max_positions=12,               # v19: 10→12 — maksimum çeşitlendirme
         coin_tier=5,
     ),
 }
@@ -103,6 +103,11 @@ COIN_TIERS: dict[int, Optional[list[str]]] = {
     4: ["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT", "DOT/USDT",
         "INJ/USDT", "FET/USDT"],
     5: None,  # None = tüm coinler serbest
+    # v21: M5 özel tier'ları — AVAX/DOGE BEAR'da tutarlı kaybettiriyor (29%/34% WR)
+    # BEAR'da sadece güvenli coinlere izin ver, volatil küçük coinleri dışarıda bırak
+    6: ["BNB/USDT", "ETH/USDT", "SOL/USDT", "ADA/USDT", "TRX/USDT",
+        "DOT/USDT", "LEO/USDT"],  # AVAX + DOGE hariç
+    7: ["ETH/USDT", "SOL/USDT", "ADA/USDT", "TRX/USDT", "DOT/USDT"],  # STRONG_BEAR: sadece en güçlüler
 }
 
 

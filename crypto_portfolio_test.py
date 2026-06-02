@@ -37,7 +37,7 @@ if _ROOT not in sys.path:
 
 from indicators.technical_indicators import TechnicalIndicators
 from strategy.trend_following_strategy import TrendFollowingStrategy
-from strategy.signal import Side
+from strategy.signal import Side, Signal
 from strategy.adaptive_regime import AdaptiveRegimeController, Regime, COIN_TIERS
 from risk import correlation_registry
 from strategy.coin_analyzer import CoinAnalyzer
@@ -161,16 +161,22 @@ BASELINE = dict(
 
 # Per-coin overrides
 PROFILES: dict[str, dict] = {
-    # BNB: choppy dönemlerde yanlış giriş çok → ADX 27 ile sadece güçlü trendlerde işlem
-    "BNB/USDT":  dict(adx_threshold=27, rsi_lower=50, atr_stop_multiplier=2.2,
-                      trailing_stop_atr_multiplier=5.0, entry_score_trend=0.63, entry_score_ranging=0.67),
-    # ETH: ayıda güçlü SHORT + boğada uzun LONG → 4.5 trailing koruyucu ama geniş
-    "ETH/USDT":  dict(adx_threshold=20, rsi_lower=50, atr_stop_multiplier=2.5,
-                      trailing_stop_atr_multiplier=4.5, entry_score_trend=0.60, entry_score_ranging=0.65),
+    # BNB: v23 — breakout_bars=20 eklendi (6 saatlik yüksek yakınında giriş şartı)
+    # Mantık: ADA gibi sadece gerçek breakout noktalarında giriş → kalite artar
+    "BNB/USDT":  dict(adx_threshold=35, rsi_lower=52, atr_stop_multiplier=2.5,
+                      trailing_stop_atr_multiplier=5.5, entry_score_trend=0.72, entry_score_ranging=0.76,
+                      max_position_pct=0.06, sl_cooldown_hours=72, breakout_bars=20),
+    # ETH: v19'da 98 işlem %32 WR — EMA200 altında LONG yapıyor sorun. v20: coin_own_bull filtresi
+    # + max_position_pct küçültüldü, sl_cooldown artırıldı
+    "ETH/USDT":  dict(adx_threshold=30, rsi_lower=50, atr_stop_multiplier=2.5,
+                      trailing_stop_atr_multiplier=5.0, entry_score_trend=0.70, entry_score_ranging=0.74,
+                      max_position_pct=0.06, sl_cooldown_hours=72),
     # SOL: yüksek volatilite → geniş stop, yüksek ADX şartı, küçük pozisyon
     # v17: 116 işlem → çok fazla. ADX 26→30, score eşikleri yükselt, cooldown artır
-    "SOL/USDT":  dict(adx_threshold=30, rsi_lower=52, atr_stop_multiplier=2.8,
-                      trailing_stop_atr_multiplier=6.0, entry_score_trend=0.68, entry_score_ranging=0.73,
+    # SOL: v21 — 40% WR ama küçük kazanç. Trailing 6.0→7.5 (kazananları daha uzun tut)
+    # stop daha dar (2.8→2.2) → kaybederken az, kazanırken daha uzun kal
+    "SOL/USDT":  dict(adx_threshold=30, rsi_lower=52, atr_stop_multiplier=2.2,
+                      trailing_stop_atr_multiplier=7.5, entry_score_trend=0.68, entry_score_ranging=0.73,
                       max_position_pct=0.05, sl_cooldown_hours=48),
     # XRP: güçlü trendlerde iyi, choppy dönemlerde kötü → seçici giriş + cooldown
     "XRP/USDT":  dict(adx_threshold=26, rsi_lower=50, atr_stop_multiplier=2.5,
@@ -180,25 +186,31 @@ PROFILES: dict[str, dict] = {
     "ADA/USDT":  dict(adx_threshold=29, rsi_lower=52, atr_stop_multiplier=2.5,
                       trailing_stop_atr_multiplier=5.5, entry_score_trend=0.72, entry_score_ranging=0.76,
                       max_position_pct=0.02, breakout_bars=24, sl_cooldown_hours=72),
-    # DOGE: meme coin → çok seçici, çok küçük pozisyon; ayı dönemde 33%WR → eşik yükselt
-    "DOGE/USDT": dict(adx_threshold=30, rsi_lower=50, atr_stop_multiplier=3.0,
-                      trailing_stop_atr_multiplier=6.0, entry_score_trend=0.71, entry_score_ranging=0.75,
-                      max_position_pct=0.04, sl_cooldown_hours=48),
+    # DOGE: v23 — breakout_bars=20 eklendi, entry_score artırıldı
+    # DOGE her versiyonda kötüleşti → sadece gerçek breakout'larda giriş yap
+    "DOGE/USDT": dict(adx_threshold=32, rsi_lower=50, atr_stop_multiplier=3.0,
+                      trailing_stop_atr_multiplier=6.5, entry_score_trend=0.73, entry_score_ranging=0.77,
+                      max_position_pct=0.03, sl_cooldown_hours=72, breakout_bars=20),
     # AVAX: D3'te aşırı trade → seçici giriş (adx=32, eşik=0.72/0.76), küçük poz
-    "AVAX/USDT": dict(adx_threshold=32, rsi_lower=50, atr_stop_multiplier=3.0,
-                      trailing_stop_atr_multiplier=6.0, entry_score_trend=0.72, entry_score_ranging=0.76,
-                      max_position_pct=0.03, sl_cooldown_hours=72),
+    # AVAX: v19'da 70 işlem %33 WR -$25.83. v20: ADX 32→36, score yükselt, küçük poz
+    "AVAX/USDT": dict(adx_threshold=36, rsi_lower=52, atr_stop_multiplier=3.0,
+                      trailing_stop_atr_multiplier=6.5, entry_score_trend=0.74, entry_score_ranging=0.78,
+                      max_position_pct=0.025, sl_cooldown_hours=96),
     # DOT: yavaş trend → breakout filtresi, küçük pozisyon
     "DOT/USDT":  dict(adx_threshold=26, rsi_lower=50, atr_stop_multiplier=2.5,
                       trailing_stop_atr_multiplier=5.5, entry_score_trend=0.66, entry_score_ranging=0.70,
                       max_position_pct=0.05, breakout_bars=24, sl_cooldown_hours=48),
     # LEO: düşük kaliteli sinyal, tüm dönemlerde kayıp → pozisyonu çok küçük tut (max %2), kısıtlı hasar
-    "LEO/USDT":  dict(adx_threshold=26, rsi_lower=50, atr_stop_multiplier=2.5,
-                      trailing_stop_atr_multiplier=6.0, entry_score_trend=0.70, entry_score_ranging=0.75,
-                      risk_per_trade=0.008, max_position_pct=0.02, sl_cooldown_hours=48),
+    # LEO: v23'te 27% WR, coin +10.7% ama bot -$2.22. Coin yavaş trend, 15m çok gürültülü.
+    # v24: ADX 26→32, entry_score çok yükselt, cooldown artır, çok küçük risk
+    "LEO/USDT":  dict(adx_threshold=32, rsi_lower=52, atr_stop_multiplier=2.5,
+                      trailing_stop_atr_multiplier=7.0, entry_score_trend=0.74, entry_score_ranging=0.78,
+                      risk_per_trade=0.006, max_position_pct=0.015, sl_cooldown_hours=96),
     # TRX: v17 — düşük volatilite coin, 15m ATR ~$0.0015 → stop çok dar → gürültü SL
     # Çözüm: trailing_mult yükselt (6→8), min_stop_pct ekle (%1.5), seyrek giriş
     # Backtest: 24 işlem -$6.42, coin +30.7% → trailing çok dar tutuyordu
+    # TRX: v22 — geniş trailing (10.0→8.0) ve dar stop geri alındı. v21'de WR %41→%32 düştü.
+    # Dar stop (2.5 ATR) TRX'in normal geri çekilmelerinde erken kesiyor. v20 değerlerine dön.
     "TRX/USDT":  dict(adx_threshold=22, rsi_lower=47, atr_stop_multiplier=3.0,
                       trailing_stop_atr_multiplier=8.0, entry_score_trend=0.65, entry_score_ranging=0.69,
                       risk_per_trade=0.012, max_position_pct=0.15, breakout_bars=16,
@@ -269,8 +281,14 @@ PROFILES: dict[str, dict] = {
 
 # Risk parametreleri (global)
 INITIAL_CAPITAL   = 10_000.0
-COMMISSION        = 0.001
-SLIPPAGE          = 0.0005
+TAKER_COMMISSION  = 0.001      # taker (market emir) — M4/M5/M6 varsayılanı
+TAKER_SLIPPAGE    = 0.0005
+COMMISSION        = TAKER_COMMISSION   # geriye dönük uyumluluk (fonksiyon içinde moda göre gölgelenir)
+SLIPPAGE          = TAKER_SLIPPAGE
+# M7 maker emir simülasyonu: pullback scalper dipte LIMIT alır, TP'de LIMIT satar →
+# likidite sağlar → maker ücreti. Round-trip maliyet %0.30 (taker) → ~%0.10 (maker).
+M7_MAKER_COMMISSION = 0.0002   # Binance maker ~%0.02 (BNB indirimi ile daha düşük)
+M7_MAKER_SLIPPAGE   = 0.0003   # maker dolumda düşük kayma (fiyatı sen belirlersin) + queue riski payı
 RISK_PER_TRADE    = 0.015
 DAILY_MAX_LOSS    = 0.04
 ATR_STOP_MULT     = 2.0
@@ -280,6 +298,94 @@ MAX_POSITION_PCT  = 0.20
 MIN_ORDER_SIZE    = 10.0
 
 WARMUP_BARS = 210   # EMA200 + buffer
+
+# ── M7 Momentum Scalper sabitleri (1m) ────────────────────────────────────────
+# Round-trip maliyet = 2×COMMISSION + 2×SLIPPAGE = 0.003 (%0.30 taker).
+# Bütün TP/SL eşikleri bu maliyeti NET aşacak şekilde seçildi (araştırma bulgusu).
+M7_TP_PCT             = 0.007   # Hızlı sabit kâr hedefi (%0.7 brüt). Maker maliyetiyle (~%0.1) net ~%0.6.
+                                #   Önceki %1.0 hedefe 1m sıçramaları HİÇ ulaşmıyordu (0 TP). Runner'da DEVRE DIŞI.
+M7_TIME_STOP_BARS     = 20      # 20 bar (=20 dk) içinde ilerleme yoksa → çık, sermayeyi serbest bırak (rotasyon)
+M7_TIME_STOP_PROGRESS = 0.002   # "İlerleme" eşiği: +%0.2 altındaysa stall sayılır
+M7_MAX_HOLD_BARS      = 45      # Sert tavan (45 dk) — runner olmayan pozisyonlar bu kadar tutulur
+M7_MIN_HOLD_BARS      = 3       # İlk 3 bar fast-exit yok (anlık gürültü çıkışını engelle)
+M7_BREAKEVEN_PCT      = 0.004   # +%0.4 kârdan sonra stop'u girişe çek (kazananı kaybettirme)
+M7_RUNNER_ADX         = 28      # coin_own_bull + ADX≥28 → "runner": sabit TP yok, trailing ile büyük trend yakala
+M7_RISK_PER_TRADE     = 0.006   # Scalp başına düşük risk (çok işlem → her biri küçük)
+M7_MAX_POSITIONS      = 5       # Eşzamanlı maks pozisyon (HFT'de korelasyon riskini sınırla)
+M7_MIN_NET_EDGE_TP    = 0.006   # Giriş öncesi: TP hedefi maliyeti en az bu kadar net aşmalı
+# YENİ M7 (M5+) — AdaptiveTrend trailing-Sharpe coin seçim eşikleri (arXiv 2602.11708)
+# 30-COIN TUNE: SL=0.4 optimum (6ay -5.72→-3.42, düzgün ters-U). 9-coin'de 0.0 idi; kullanıcı 30 coin kullanıyor.
+M7_SHARPE_LONG        = float(os.environ.get("M7_SHARPE_LONG", "0.4"))   # LONG kapısı: coin trailing Sharpe ≥ bu (30-coin optimal=0.4; 9-coin=0.0)
+# #9 REJİM-ADAPTİF GEVŞETME — VARSAYILAN KAPALI (0.0 = M7_SHARPE_LONG ile aynı → no-op).
+# TEST: always-on her varyantta 6-ayı bozdu (-1.70→-5.6); boğa haftasını M5 üstüne çıkardı
+# (+1.49%) ama gecikmeli ADX choppy-boğayı 6-ayda ayıklayamadı → mutlak-kâr önceliği = KAPALI.
+# OPT-IN: canlıda kesin boğa görüldüğünde `M7_SHARPE_LONG_BULL=-0.3` → temiz-boğada agresif (+1.49%).
+M7_SHARPE_LONG_BULL   = float(os.environ.get("M7_SHARPE_LONG_BULL", "0.0"))   # LONG (temiz BOĞA) kapısı: 0.0=kapalı(no-op); -0.3=agresif-boğa opt-in
+M7_BULL_ADX           = float(os.environ.get("M7_BULL_ADX", "30"))            # Gevşetme SADECE coin ADX≥bu iken (temiz trend) → choppy-boğayı ele
+# #10 KARŞI-TREND LONG FİLTRESİ (M5 canlı tanısı: LONG'lar düşen coinde stop oluyordu).
+# TEST: 6ay -1.70→-1.42 (+%0.28, PF↑, DD↓), boğa/ayı değişmedi (kazanan kesmedi) → AKTİF.
+M7_LONG_OWN_BULL      = bool(int(os.environ.get("M7_LONG_OWN_BULL", "1")))     # 1=M7 LONG yalnız coin kendi EMA200 ÜSTÜNDE (varsayılan AÇIK), 0=kapat
+# #12 BOĞA LONG SIZE BOOST (boğada M5'i geçme: kaliteli LONG'u büyüt). DÜZGÜN tradeoff (overfit değil).
+# 30-coin sweep — boğa↑ ama 6ay↓: 1.5→(boğa+1.06,6ay-3.87) 2.0→(+1.89,-5.57) 2.5→(+2.37>M5,-7.90).
+# Always-on 6-ayı bozar (boğa agresyonu choppy-bull'u büyütür) → VARSAYILAN KAPALI; canlıda kesin-boğada aç.
+M7_BULL_LONG_BOOST    = float(os.environ.get("M7_BULL_LONG_BOOST", "1.0"))     # 1.0=kapalı; canlı kesin-boğada 2.0-2.5 → M5'i boğada geç
+# #13 TREND-GÜCÜ HOLD (kullanıcı fikri): coin hâlâ güçlü pumper'ken strategy_exit'i bastır → tam kâr al.
+# 30-coin TEST: 6ay -3.42→-1.96 (+%1.46, PF↑ DD↓), bearlar regresyonsuz, adx-eğrisi düzgün (12-25 hep iyi)
+# → AKTİF. Oturumun en büyük tek iyileştirmesi. adx_min=20 daha iyi (-1.04) ama 25 valide+konservatif.
+M7_TREND_HOLD         = bool(int(os.environ.get("M7_TREND_HOLD", "1")))        # 1=güçlü coinde kal (AÇIK), 0=kapat
+M7_HOLD_ADX           = float(os.environ.get("M7_HOLD_ADX", "25"))             # #13 "hâlâ güçlü" ADX eşiği (20→ekstra +%0.9; 12-25 robust)
+# #13-SHORT TEST: BAŞARISIZ → KAPALI. 6ay -1.96→-3.34 (long/short asimetrisi: düşüşler sharp
+# reversal/squeeze'le biter, tutulan short ralliye yakalanır). LONG-hold çalışır, SHORT-hold çalışmaz.
+M7_TREND_HOLD_SHORT   = bool(int(os.environ.get("M7_TREND_HOLD_SHORT", "0")))  # 0=kapalı (test→başarısız)
+# #14 KÂR-KİLİT ÇIKIŞI (kullanıcı fikri) — TEST: FELAKET → KAPALI. 6ay -1.96→-6.2/-7.2 (skip-strong dahil).
+# #8 ile aynı: 2-mum pullback'te kazananı keser → trend-following'i öldürür. son1h iyi (reversal haftası) ama 6ay çöker.
+# Doğru çözüm = #15 BREAKEVEN STOP (kâr zarara dönmez, ama pullback'te kesmez).
+M7_PROFIT_LOCK        = bool(int(os.environ.get("M7_PROFIT_LOCK", "0")))       # 0=kapalı (test→başarısız)
+# #15 BREAKEVEN STOP: +X% kârdan sonra stop'u GİRİŞE çek → kâr zarara dönemez (pullback'te kesmez).
+# 30-coin TEST: 6ay -1.96→-0.55 (+%1.41, PF↑ DD↓), son1h +0.80→+1.41, boğa/ayı bozulmadı → AKTİF.
+# Trigger ters-V (0.004→-1.63, 0.006→-0.55, 0.010→-2.02): 0.006 tepe; 0.004 de baseline'ı geçer.
+M7_BREAKEVEN_ON       = bool(int(os.environ.get("M7_BREAKEVEN_ON", "1")))      # 1=breakeven stop AKTİF (kâr zarara dönmez)
+M7_BE_TRIGGER         = float(os.environ.get("M7_BE_TRIGGER", "0.006"))        # bu kâr%'e ulaşınca stop→giriş (+%0.6 optimal)
+# #16 CHANDELIER EXIT (Chuck LeBeau) — AKTİF. Trail = en-yüksek-tepe(N) − ATR×mult → tepeye sabit.
+# 30-coin TEST: 6ay -0.55→+1.28 (KÂRA geçti!), boğa/ayı/son1h korundu. mult sweep PLATO (5-8 hep +):
+# 4→-2.52(çok sıkı), 5→+1.94, 6→+1.28, 7→+2.08, 8→+1.63 → mult=6 konservatif plato-ortası seçildi.
+M7_CHANDELIER         = bool(int(os.environ.get("M7_CHANDELIER", "1")))        # 1=Chandelier trail AKTİF (tepe-sabitli), 0=eski zoom-trail
+M7_CHAND_N            = int(os.environ.get("M7_CHAND_N", "22"))                # en-yüksek-tepe lookback (bar)
+M7_CHAND_MULT         = float(os.environ.get("M7_CHAND_MULT", "6.0"))          # ATR çarpanı (M7 geniş trail → 6 optimal; 5-8 robust)
+# Trail modu seçici (literatür-tekniği denemeleri): "" / "chandelier" = #16 (varsayılan), "supertrend" = ST line trail.
+M7_TRAIL_MODE         = os.environ.get("M7_TRAIL_MODE", "").strip().lower()    # "supertrend" → Supertrend trail dene
+M7_ST_PERIOD          = int(os.environ.get("M7_ST_PERIOD", "10"))             # Supertrend ATR periyodu (swing: 10-20)
+M7_ST_MULT            = float(os.environ.get("M7_ST_MULT", "3.0"))            # Supertrend çarpanı (swing: 5; kripto: 2-3)
+M7_PSAR_AF0           = float(os.environ.get("M7_PSAR_AF0", "0.02"))          # PSAR başlangıç ivme (Wilder: 0.02)
+M7_PSAR_MAX           = float(os.environ.get("M7_PSAR_MAX", "0.20"))          # PSAR maks ivme (Wilder: 0.20; düşük=gevşek)
+M7_LOCK_MIN_PNL       = float(os.environ.get("M7_LOCK_MIN_PNL", "0.003"))      # kilit için min net kâr (0.003=~round-trip maliyet üstü)
+M7_LOCK_DOWN_BARS     = int(os.environ.get("M7_LOCK_DOWN_BARS", "2"))          # kaç mum art arda düşüş → kilitle (kullanıcı: 2)
+M7_LOCK_SKIP_STRONG   = bool(int(os.environ.get("M7_LOCK_SKIP_STRONG", "1")))  # 1=coin HÂLÂ güçlüyse kilitleme (#13 ride etsin, kazananı kesme)
+# #11 BTC KISA-VADE ROLLOVER FİLTRESİ — TEST EDİLDİ, OVERFIT → VARSAYILAN KAPALI.
+# Span sweep ERRATİK (6ay: 480→-1.54, 576→-1.41, 624→-0.69, 672→-0.78, 720→-2.79):
+# ±48 bar oynatınca -0.69↔-2.79 savruluyor = genellenmez (robust olsa düzgün olurdu).
+# Market-timing filtreleri tekrar başarısız; coin-yapısal filtre (#10) robust, bu değil.
+M7_LONG_BTC_FILTER    = bool(int(os.environ.get("M7_LONG_BTC_FILTER", "0")))   # 1=AÇ (önerilmez, overfit), 0=kapalı varsayılan
+M7_BTC_FILTER_SPAN    = int(os.environ.get("M7_BTC_FILTER_SPAN", "480"))       # BTC EMA span (15m bar) — yalnız deney için
+M7_SHARPE_SHORT       = float(os.environ.get("M7_SHARPE_SHORT", "0.3"))   # SHORT: trailing Sharpe ≤ -bu (30-coin tune için env-tunable)
+# #17 HMA-erken'i Sharpe kapısından MUAF — TEST: FELAKET → KAPALI. 6ay +1.28→-10.01% (447 işlem, PF0.40).
+# HMA-erken sinyali gürültülü (her minik yükselişte); Sharpe kapısı onu filtrelemek için ŞART. Muaf=flood.
+M7_HMA_EXEMPT         = bool(int(os.environ.get("M7_HMA_EXEMPT", "0")))   # 0=kapalı (test→başarısız)
+# #18 Sharpe lookback — KISA lookback = fresh pump'a hızlı tepki = ERKEN giriş (kalite barı SL=0.4 aynı).
+# TEST: kısaltmak gürültü ekledi (3:-7.05..10:-6.59 vs 14:+1.28) → 14 optimal kaldı.
+M7_SHARPE_LOOKBACK    = int(os.environ.get("M7_SHARPE_LOOKBACK", "14"))   # trailing-Sharpe penceresi (gün); kısa=erken giriş
+# #19 HACİM-TEYİTLİ ERKEN GİRİŞ — TEST: temiz eşik YOK → KAPALI. Düşük spike(≤5) TIA yakalar ama 6ay flood
+# (-4.22); yüksek spike(≥7) hiç fire etmez (son1h=baseline). Pump-öncesi hacim, başarısız-pump'larla aynı → ayrılamaz.
+M7_VOL_CONFIRM        = bool(int(os.environ.get("M7_VOL_CONFIRM", "0")))  # 0=kapalı (test→başarısız: erken giriş çözülemez)
+M7_VOL_SPIKE          = float(os.environ.get("M7_VOL_SPIKE", "2.0"))      # hacim > ort × bu → patlama
+# ASİMETRİK M7 (kullanıcı fikri): SHORT'ta M5-gibi agresif, LONG'ta M7-gibi seçici.
+# Gerekçe: canlı veride SHORT'lar %82 WR (en iyi tarafımız) ama λ-tilt onları kısıyordu.
+# TEST: hep(1)/AUTO-global(2)/AUTO-strong(3) → HEPSİ 6-ayı bozdu (-1.70→-3.9..-5.8); rejim
+# sinyali choppy-ayıyı temiz-ayıdan ayıramıyor → VARSAYILAN KAPALI. Canlıda kesin-ayıda `=1`.
+M7_SHORTS_LIKE_M5     = int(os.environ.get("M7_SHORTS_LIKE_M5", "0"))  # 0=kapalı(M7 seçici-DEFAULT), 1=hep M5-short(canlı ayı opt-in), 2=AUTO-ayı, 3=AUTO-şiddetli-ayı
+# Sweep/opsiyon parametreleri (env ile override edilir, kod düzenlemeden test için)
+M7_HMA_PERIOD         = int(os.environ.get("M7_HMA_PERIOD", "20"))      # HMA erken-giriş periyodu (tara: 10..30)
+M7_LAMBDA_TILT        = float(os.environ.get("M7_LAMBDA_TILT", "0.55")) # SHORT boyut çarpanı: 0.55=varsayılan long-tilt (6ay getiri+%0.10 & DD−%28); 1.0=kapalı, 0.43=düşük-DD
 
 
 # ── Multi-Timeframe Helpers (v13) ─────────────────────────────────────────────
@@ -302,8 +408,29 @@ def _htf_rule_for(timeframe: str) -> str:
 
 # ── Veri çekimi ───────────────────────────────────────────────────────────────
 
-def fetch_ohlcv(symbol: str, days: int = 365, timeframe: str = "1h") -> pd.DataFrame:
-    """ccxt ile OHLCV çeker. LEO gibi Binance'te olmayan coinler için OKX kullanır."""
+def fetch_ohlcv(symbol: str, days: int = 365, timeframe: str = "1h",
+                start_date: Optional[str] = None, end_date: Optional[str] = None) -> pd.DataFrame:
+    """ccxt ile OHLCV çeker. LEO gibi Binance'te olmayan coinler için OKX kullanır.
+
+    start_date verilirse SINIRLI (bounded) çekim yapılır: sadece
+    [start - warmup_buffer ... end veya now] aralığı çekilir. Bu, geçmiş bir
+    haftalık pencereyi 1m'de test ederken tüm geçmişi çekmeyi önler
+    (8 ay önceki 1 hafta için 350k bar yerine ~16k bar).
+    """
+    # Sabit historik pencereler (start+end) değişmez → disk cache ile tekrar çekimi önle.
+    # 9 testte (3 model × 3 pencere) her pencere 1 kez çekilir, sonraki modeller cache'ten okur.
+    _cache_path = None
+    if start_date is not None and end_date is not None:
+        _cache_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".ohlcv_cache")
+        os.makedirs(_cache_dir, exist_ok=True)
+        _ck = f"{symbol}_{timeframe}_{start_date}_{end_date}".replace("/", "")
+        _cache_path = os.path.join(_cache_dir, f"{_ck}.pkl")
+        if os.path.exists(_cache_path):
+            try:
+                return pd.read_pickle(_cache_path)
+            except Exception:
+                pass
+
     ex_name = SYMBOL_EXCHANGE.get(symbol, "binance")
     exchange = getattr(ccxt, ex_name)({
         "enableRateLimit": True,
@@ -312,7 +439,17 @@ def fetch_ohlcv(symbol: str, days: int = 365, timeframe: str = "1h") -> pd.DataF
             "fetchMarkets": ["spot"],   # ccxt 4.x: sadece spot marketleri yükle
         },
     })
-    since_ms = int((datetime.now(timezone.utc) - timedelta(days=days + 10)).timestamp() * 1000)
+    _warmup_min = WARMUP_BARS * _tf_to_minutes(timeframe)
+    # Warmup buffer: indikatör ısınması (EMA200, HTF, tsmom) için pencere öncesi veri.
+    _warmup_buffer = pd.Timedelta(minutes=_warmup_min) + pd.Timedelta(days=3)
+    until_ms: Optional[int] = None
+    if start_date is not None:
+        _start_ts = pd.Timestamp(start_date, tz="UTC")
+        since_ms = int((_start_ts - _warmup_buffer).timestamp() * 1000)
+        if end_date is not None:
+            until_ms = int((pd.Timestamp(end_date, tz="UTC") + pd.Timedelta(days=1)).timestamp() * 1000)
+    else:
+        since_ms = int((datetime.now(timezone.utc) - timedelta(days=days + 10)).timestamp() * 1000)
     # OKX max 300 bar, Binance 1000 bar döndürür
     chunk_size = 300 if ex_name == "okx" else 1000
     all_data: list = []
@@ -323,6 +460,8 @@ def fetch_ohlcv(symbol: str, days: int = 365, timeframe: str = "1h") -> pd.DataF
         all_data.extend(chunk)
         if len(chunk) < chunk_size:
             break
+        if until_ms is not None and chunk[-1][0] >= until_ms:
+            break  # bounded mod: pencere sonuna ulaştık → dur
         since_ms = chunk[-1][0] + 1
         time.sleep(0.2)
 
@@ -336,10 +475,23 @@ def fetch_ohlcv(symbol: str, days: int = 365, timeframe: str = "1h") -> pd.DataF
     df.sort_index(inplace=True)
     df = df.iloc[:-1]  # son kapanmamış mumu çıkar
 
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-    cutoff_ts = pd.Timestamp(cutoff)
-    # v13: WARMUP_BARS bar cinsinden — TF'ye göre dakika hesapla (1h: 210h, 15m: 52.5h, 1m: 3.5h)
-    df = df[df.index >= cutoff_ts - pd.Timedelta(minutes=WARMUP_BARS * _tf_to_minutes(timeframe))]
+    if start_date is not None:
+        # Bounded mod: [start - warmup_buffer ... end] aralığına kırp
+        _lo = pd.Timestamp(start_date, tz="UTC") - _warmup_buffer
+        df = df[df.index >= _lo]
+        if end_date is not None:
+            _hi = pd.Timestamp(end_date, tz="UTC") + pd.Timedelta(days=1)
+            df = df[df.index <= _hi]
+    else:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        cutoff_ts = pd.Timestamp(cutoff)
+        # v13: WARMUP_BARS bar cinsinden — TF'ye göre dakika hesapla (1h: 210h, 15m: 52.5h, 1m: 3.5h)
+        df = df[df.index >= cutoff_ts - pd.Timedelta(minutes=WARMUP_BARS * _tf_to_minutes(timeframe))]
+    if _cache_path is not None:
+        try:
+            df.to_pickle(_cache_path)
+        except Exception:
+            pass
     return df
 
 
@@ -799,6 +951,194 @@ def _run_rolling_wfo(
     return new_results
 
 
+# ── M7 erken-giriş: HMA (Hull MA) — yükselişi EMA200'den ~%27 daha ERKEN yakalar ──
+
+def _hma(s: pd.Series, n: int = 20) -> pd.Series:
+    """Hull Moving Average — düşük gecikmeli MA. Ampirik: capture %89.6 (EMA200 %62.7)."""
+    half, sq = int(n/2), int(round(n**0.5))
+    def _wma(x, p):
+        w = np.arange(1, p+1, dtype=float)
+        return x.rolling(p).apply(lambda v: np.dot(v, w)/w.sum(), raw=True)
+    return _wma(2*_wma(s, half) - _wma(s, n), sq)
+
+
+def _coin_still_pumping(s: pd.DataFrame, adx_min: float = 25.0, lookback: int = 8) -> bool:
+    """#13 — Coin HÂLÂ güçlü aktif uptrend'de mi? (yeni-zir'ye yakın + yüksek ADX + fast-EMA üstü)
+    True ise M7 strategy_exit'i bastırılır → güçlü pumper'da kalıp tam kâr alınır (BNB tarzı)."""
+    if s is None or len(s) < lookback + 2:
+        return False
+    c = s["close"]
+    price = float(c.iloc[-1])
+    if price <= 0:
+        return False
+    adx = float(s["adx"].iloc[-1]) if "adx" in s.columns and not pd.isna(s["adx"].iloc[-1]) else 0.0
+    ema_fast = float(c.ewm(span=lookback, adjust=False).mean().iloc[-1])
+    recent_high = float(c.iloc[-lookback:].max())
+    # Hâlâ güçlü: ADX yüksek + fiyat fast-EMA üstü + zirveye yakın (pullback/zayıflama YOK)
+    return (adx >= adx_min) and (price > ema_fast) and (price >= recent_high * 0.985)
+
+
+def _coin_still_dumping(s: pd.DataFrame, adx_min: float = 25.0, lookback: int = 8) -> bool:
+    """#13-SHORT — Coin HÂLÂ güçlü aktif DÜŞÜŞTE mi? (yeni-dibe yakın + yüksek ADX + fast-EMA ALTINDA)
+    True ise M7 SHORT strategy_exit'i bastırılır → güçlü düşüşte short'ta kalıp tam kâr alınır."""
+    if s is None or len(s) < lookback + 2:
+        return False
+    c = s["close"]
+    price = float(c.iloc[-1])
+    if price <= 0:
+        return False
+    adx = float(s["adx"].iloc[-1]) if "adx" in s.columns and not pd.isna(s["adx"].iloc[-1]) else 0.0
+    ema_fast = float(c.ewm(span=lookback, adjust=False).mean().iloc[-1])
+    recent_low = float(c.iloc[-lookback:].min())
+    # Hâlâ güçlü düşüş: ADX yüksek + fiyat fast-EMA altı + dibe yakın (sıçrama/zayıflama YOK)
+    return (adx >= adx_min) and (price < ema_fast) and (price <= recent_low * 1.015)
+
+
+def _supertrend_line(high: pd.Series, low: pd.Series, close: pd.Series,
+                     period: int = 10, mult: float = 3.0) -> pd.Series:
+    """Supertrend çizgisi (LONG trail için): boğada alt-bant (fiyat altı, ratchet), flip'te üste sıçrar.
+    Numpy döngüsü → hızlı. price <= st_line olunca çıkış (= supertrend bearish flip)."""
+    h, l, c = high.values.astype(float), low.values.astype(float), close.values.astype(float)
+    n = len(c)
+    if n < 2:
+        return pd.Series(c, index=close.index)
+    hl2 = (h + l) / 2.0
+    cprev = np.roll(c, 1); cprev[0] = c[0]
+    tr = np.maximum(h - l, np.maximum(np.abs(h - cprev), np.abs(l - cprev)))
+    atr = pd.Series(tr).ewm(alpha=1.0/period, adjust=False).mean().values
+    up = hl2 - mult * atr          # alt bant (boğa trail)
+    dn = hl2 + mult * atr          # üst bant (ayı)
+    st = np.empty(n); st[0] = up[0]; direction = 1
+    for i in range(1, n):
+        if   c[i] > st[i-1]: new_dir = 1
+        elif c[i] < st[i-1]: new_dir = -1
+        else:                new_dir = direction
+        if new_dir == 1:
+            st[i] = max(up[i], st[i-1]) if direction == 1 else up[i]
+        else:
+            st[i] = min(dn[i], st[i-1]) if direction == -1 else dn[i]
+        direction = new_dir
+    return pd.Series(st, index=close.index)
+
+
+def _psar(high: pd.Series, low: pd.Series, af0: float = 0.02, afs: float = 0.02, afmax: float = 0.20) -> pd.Series:
+    """Parabolic SAR (Wilder) — hızlanan trail. Boğada fiyat altı, flip'te üste sıçrar."""
+    h, l = high.values.astype(float), low.values.astype(float)
+    n = len(h)
+    if n < 2:
+        return pd.Series(l, index=high.index)
+    sar = np.empty(n); trend = 1; af = af0; ep = h[0]; sar[0] = l[0]
+    for i in range(1, n):
+        sar[i] = sar[i-1] + af * (ep - sar[i-1])
+        if trend == 1:
+            if l[i] < sar[i]:                       # flip → down
+                trend = -1; sar[i] = ep; ep = l[i]; af = af0
+            else:
+                if h[i] > ep: ep = h[i]; af = min(af + afs, afmax)
+                sar[i] = min(sar[i], l[i-1], l[max(i-2,0)])
+        else:
+            if h[i] > sar[i]:                       # flip → up
+                trend = 1; sar[i] = ep; ep = h[i]; af = af0
+            else:
+                if l[i] < ep: ep = l[i]; af = min(af + afs, afmax)
+                sar[i] = max(sar[i], h[i-1], h[max(i-2,0)])
+    return pd.Series(sar, index=high.index)
+
+
+def _kama(close: pd.Series, er_period: int = 10, fast: int = 2, slow: int = 30) -> pd.Series:
+    """Kaufman Adaptive MA — chop'ta yavaş, trendde hızlı. Çıkış: price < KAMA."""
+    c = close.values.astype(float)
+    n = len(c)
+    kama = np.empty(n)
+    k0 = min(er_period, n)
+    kama[:k0] = c[:k0]
+    fsc, ssc = 2.0/(fast+1), 2.0/(slow+1)
+    for i in range(er_period, n):
+        change = abs(c[i] - c[i-er_period])
+        vol = np.sum(np.abs(np.diff(c[i-er_period:i+1])))
+        er = (change/vol) if vol != 0 else 0.0
+        sc = (er*(fsc - ssc) + ssc) ** 2
+        kama[i] = kama[i-1] + sc*(c[i] - kama[i-1])
+    return pd.Series(kama, index=close.index)
+
+
+# ── M7 (AdaptiveTrend) trailing-Sharpe coin seçimi ────────────────────────────
+
+def _coin_trailing_sharpe(slice_df: pd.DataFrame, bpd: int, lookback_days: int = M7_SHARPE_LOOKBACK) -> float:
+    """Coin'in son N günündeki risk-ayarlı momentumu (günlük-annualize Sharpe benzeri).
+
+    Kaynak: AdaptiveTrend, arXiv 2602.11708 (Sharpe 2.41) — yalnızca güçlü trailing
+    Sharpe'lı coinlere gir. Düzgün (yüksek getiri / düşük vol) trendleri ödüllendirir,
+    choppy coinleri eler. = mean(getiri)/std(getiri) × √(bar/gün).
+    """
+    if "close" not in slice_df.columns:
+        return float("nan")
+    avail = len(slice_df) - 1
+    # Adaptif lookback: 14 günü hedefle ama mevcut veriyle sınırla (kısa testler için).
+    n = min(lookback_days * bpd, avail)
+    if n < 3 * bpd:          # < 3 gün veri → güvenilmez → gate'i ATLA (nan)
+        return float("nan")
+    _rets = slice_df["close"].pct_change().tail(n)
+    _mu = float(_rets.mean())
+    _sd = float(_rets.std())
+    if _sd <= 0 or pd.isna(_mu) or pd.isna(_sd):
+        return float("nan")
+    return (_mu / _sd) * (bpd ** 0.5)
+
+
+# ── M7 Pullback Scalper sinyali (ESKİ 1m — artık kullanılmıyor) ────────────────
+
+def _m7_signal(slice_df: pd.DataFrame) -> tuple:
+    """
+    M7 PULLBACK sinyali — momentum kovalamanın TERSİ.
+
+    Klasik momentum scalper (ADX spike + hacim) hareketi GERÇEKLEŞTİKTEN sonra
+    teyit eder → tepe noktasında alır → 1m gürültüsü hemen stop'lar (WR %12).
+
+    M7 bunun yerine TREND YÖNÜNDE GERİ ÇEKİLMEYİ yakalar (araştırma #3 kuralı,
+    "buy-the-dip-in-uptrend" = yükseliş piyasasının kâr motoru):
+      LONG  : 15m trend YUKARI + coin EMA200 üstünde + RSI<45 (dip) + RSI yukarı
+              kıvrılıyor + yeşil mum (dönüş başladı) → dipten al
+      SHORT : 15m trend AŞAĞI + coin EMA200 altında + RSI>55 (ralli) + RSI aşağı
+              kıvrılıyor + kırmızı mum → rallinin tepesinden sat
+
+    Returns: (Side, confidence, reason)
+    """
+    if len(slice_df) < 3:
+        return Side.HOLD, 0.0, ""
+    row  = slice_df.iloc[-1]
+    prev = slice_df.iloc[-2]
+    close  = float(row.get("close", 0.0) or 0.0)
+    pclose = float(prev.get("close", 0.0) or 0.0)
+    ema200 = float(row.get("ema_200", 0.0) or 0.0)
+    rsi    = float(row.get("rsi", 50.0))
+    prsi   = float(prev.get("rsi", 50.0))
+    htf_up = bool(row.get("htf_trend_up", True))
+    # Stoch teyidi (Freqtrade Scalp.py kanıtlı): %K, %D'yi yukarı keserse dönüş GÜÇLÜ.
+    # Ölçekten bağımsız karşılaştırma (k>d) → zayıf "yeşil mum" sıçramalarını eler.
+    stoch_k = float(row.get("stoch_k", 50.0))
+    stoch_d = float(row.get("stoch_d", 50.0))
+    if pd.isna(stoch_k) or pd.isna(stoch_d):
+        stoch_k = stoch_d = 50.0
+    if close <= 0 or ema200 <= 0 or pd.isna(rsi) or pd.isna(prsi):
+        return Side.HOLD, 0.0, ""
+
+    # LONG: yükseliş trendinde dip alımı + stoch yukarı dönüşü
+    #   RSI<38 (DERİN dip → daha güçlü sıçrama) + RSI yukarı + yeşil mum + Stoch %K > %D
+    if (htf_up and close > ema200 and rsi < 38.0 and rsi > prsi
+            and close > pclose and stoch_k > stoch_d):
+        conf = float(np.clip(0.55 + (38.0 - rsi) / 60.0, 0.55, 0.95))
+        return Side.BUY, conf, f"pullback_long rsi={rsi:.0f}"
+
+    # SHORT: düşüş trendinde ralli satışı + stoch aşağı dönüşü
+    if ((not htf_up) and close < ema200 and rsi > 62.0 and rsi < prsi
+            and close < pclose and stoch_k < stoch_d):
+        conf = float(np.clip(0.55 + (rsi - 62.0) / 60.0, 0.55, 0.95))
+        return Side.SHORT, conf, f"rally_short rsi={rsi:.0f}"
+
+    return Side.HOLD, 0.0, ""
+
+
 # ── Ana Backtest ──────────────────────────────────────────────────────────────
 
 def run_portfolio_backtest(
@@ -814,12 +1154,25 @@ def run_portfolio_backtest(
     m4_mode: bool = False,          # True → M4: intra-simulation rejim checkpoint + rolling WFO
     m5_mode: bool = False,          # True → M5: ATR-percentile sizing + circuit breaker + ER gate + momentum decay
     m6_mode: bool = False,          # True → M6: agresif pyramiding + erken trailing zoom + büyük pozisyon
-    timeframe: Optional[str] = None,# v13: Bar timeframe. None → M4/M5=15m, M6=1m, default=1h
+    m7_mode: bool = False,          # True → M7: 1m momentum scalper (hızlı TP + time-stop + rotasyon)
+    timeframe: Optional[str] = None,# v13: Bar timeframe. None → M4/M5=15m, M6/M7=1m, default=1h
     json_out: Optional[str] = None, # Opsiyonel JSON state dosyası yolu (live dashboard için)
 ) -> None:
-    # v13: Per-model timeframe — M4/M5 → 15m (orta-vade swing), M6 → 1m (scalping)
+    # ══════════════════════════════════════════════════════════════════════════
+    # YENİ M7 = M5 (15m) TABANLI + iyileştirmeler. (Veri: 1m scalper tavana çarptı,
+    # M5 her rejimde kazanıyor → M5'i temel al, daha kârlı yap.)
+    # Eski 1m scalper kodu m7_mode bayrağına bağlıydı → bayrağı KAPATARAK tüm 1m
+    # mantığını devre dışı bırakıyoruz. _is_m7 sadece ETİKET + YENİ iyileştirmeler için.
+    # --m7 çağrısı m5_mode'u da True yapar (main'de) → M7, M5'in TÜM davranışını alır.
+    # ══════════════════════════════════════════════════════════════════════════
+    _is_m7 = m7_mode
+    m7_mode = False   # eski 1m scalper kodunu tamamen kapat → M7 artık M5 davranışı
+    # v13: Per-model timeframe — M4/M5/M7 → 15m (orta-vade swing), M6 → 1m (scalping)
     if timeframe is None:
-        if m6_mode:
+        _tf_env = os.environ.get("M7_TF", "").strip()   # test override (örn "5m") — strateji TF'sini değiştir
+        if _tf_env:
+            timeframe = _tf_env
+        elif m6_mode or m7_mode:
             timeframe = "1m"
         elif m5_mode or m4_mode:
             timeframe = "15m"
@@ -827,6 +1180,16 @@ def run_portfolio_backtest(
             timeframe = "1h"
     _bpd = _bars_per_day(timeframe)
     _tf_mins = _tf_to_minutes(timeframe)
+    # ── Komisyon/slippage modu (LOKAL gölgeleme) ──────────────────────────────
+    # M7: maker emir simülasyonu (pullback scalper limit ile alır/satar → likidite sağlar).
+    # Diğer modlar: taker. Bu atama COMMISSION/SLIPPAGE'i fonksiyon boyunca LOKAL yapar,
+    # böylece aşağıdaki tüm trade hesapları (giriş/çıkış/pyramid) moda göre doğru ücreti kullanır.
+    if m7_mode:
+        COMMISSION = M7_MAKER_COMMISSION
+        SLIPPAGE   = M7_MAKER_SLIPPAGE
+    else:
+        COMMISSION = TAKER_COMMISSION
+        SLIPPAGE   = TAKER_SLIPPAGE
     _label = label or f"Son {days} Gün"
     print(f"\n{'='*72}")
     print(f"  KRIPTO PORTFOLIO BACKTEST — {_label} | Sermaye: ${initial_capital:,.0f}")
@@ -840,7 +1203,8 @@ def run_portfolio_backtest(
     print(f"  Timeframe: {timeframe} ({_bpd} bar/gün)")
     for sym in fetch_list:
         try:
-            df = fetch_ohlcv(sym, days=days + 5, timeframe=timeframe)
+            df = fetch_ohlcv(sym, days=days + 5, timeframe=timeframe,
+                             start_date=start_date, end_date=end_date)
             raw_data[sym] = df
             print(f"  {sym:<12} {len(df):>5} bar  "
                   f"({df.index[0].strftime('%Y-%m-%d')} → {df.index[-1].strftime('%Y-%m-%d')})")
@@ -852,7 +1216,8 @@ def run_portfolio_backtest(
     if "BTC/USDT" not in raw_data:
         try:
             print("  BTC/USDT  (rejim için ayrıca çekiliyor...)")
-            raw_data["_BTC_REGIME_"] = fetch_ohlcv("BTC/USDT", days=days + 5, timeframe=timeframe)
+            raw_data["_BTC_REGIME_"] = fetch_ohlcv("BTC/USDT", days=days + 5, timeframe=timeframe,
+                                                   start_date=start_date, end_date=end_date)
         except Exception as e:
             print(f"  BTC rejim verisi alınamadı: {e}")
 
@@ -862,7 +1227,21 @@ def run_portfolio_backtest(
     sym_ind: dict[str, pd.DataFrame] = {}
     for sym, df in raw_data.items():
         try:
-            sym_ind[sym] = prepare_indicators(df, indicators_obj, timeframe=timeframe)
+            _prepared = prepare_indicators(df, indicators_obj, timeframe=timeframe)
+            if _is_m7:
+                _prepared["hma20"] = _hma(_prepared["close"], M7_HMA_PERIOD)  # M7 erken-giriş (periyot: M7_HMA_PERIOD)
+                _prepared["ema9"]  = _prepared["close"].ewm(span=9, adjust=False).mean()  # M7 hızlı çıkış
+                _has_hl = {"high", "low"} <= set(_prepared.columns)
+                if M7_TRAIL_MODE == "supertrend" and _has_hl:
+                    _prepared["st_line"] = _supertrend_line(
+                        _prepared["high"], _prepared["low"], _prepared["close"],
+                        period=M7_ST_PERIOD, mult=M7_ST_MULT)
+                elif M7_TRAIL_MODE == "psar" and _has_hl:
+                    _prepared["st_line"] = _psar(_prepared["high"], _prepared["low"],
+                                                 af0=M7_PSAR_AF0, afs=M7_PSAR_AF0, afmax=M7_PSAR_MAX)
+                elif M7_TRAIL_MODE == "kama":
+                    _prepared["st_line"] = _kama(_prepared["close"])
+            sym_ind[sym] = _prepared
         except Exception as e:
             print(f"  {sym}: indikatör hatası — {e}")
 
@@ -883,6 +1262,7 @@ def run_portfolio_backtest(
     # ── AUTO MODE: trade_start belli olduktan HEMEN SONRA mod seç ───────────
     # Coin seçimi ve WFO'dan ÖNCE çalışmalı — sıra kritik!
     if auto_mode:
+        _universe_requested = bool(use_universe)  # kullanıcı --universe ile AÇIKÇA 30-coin istedi mi
         _btc_for_regime = btc_regime_df
         if _btc_for_regime is not None:
             detected = _assess_btc_regime(_btc_for_regime, trade_start)
@@ -892,19 +1272,20 @@ def run_portfolio_backtest(
         print(f"\n{'─'*60}")
         print(f"  🤖 AUTO MODE — BTC Rejim Tespiti: {detected}")
         if detected == "BULL":
-            use_universe = False
+            use_universe = _universe_requested   # --universe açıksa 30-coin koru (canlı eşleşmesi)
             use_wfo      = False
             print(f"  → Boğa piyasası tespit edildi")
-            print(f"  → MOD: M1 (9 sabit coin, PROFILES parametreleri, WFO yok)")
+            print(f"  → MOD: M1 ({'30-coin UNIVERSE' if _universe_requested else '9 sabit coin'}, WFO yok)")
         else:
             use_universe = True
             use_wfo      = True
             regime_emoji = "🔴" if detected == "BEAR" else "🟡"
             print(f"  {regime_emoji} → {detected} piyasası tespit edildi")
-            if m4_mode:
+            if m4_mode and not _universe_requested:
                 # M4v8: Universe yerine SYMBOLS (9 coin) + WFO — gerçek Hibrit modu.
                 # AUTO modun 15 coin (9+6 universe) seçimi kötü sonuç veriyordu.
                 # Hibrit testi SYMBOLS+WFO ile +8.16% (Boğa) / +4.94% (Ayı) yaptı.
+                # NOT: --universe AÇIKÇA verilirse bu ezme atlanır → 30-coin (canlı bot eşleşmesi).
                 use_universe = False
                 print(f"  → MOD: M4-Hibrit (9 SYMBOLS coin, WFO aktif)")
             else:
@@ -997,6 +1378,12 @@ def run_portfolio_backtest(
     if btc_df is not None and "ema_slow" in btc_df.columns:
         btc_regime = (btc_df["close"] > btc_df["ema_slow"]).rename("btc_bull")
 
+    # #11 — BTC kısa-vade trend serisi (M7 anti-rollover LONG filtresi).
+    # BTC close > ~2 günlük EMA (15m×192) → piyasa kısa-vade sağlıklı. Per-bar .asof(ts) ile bakılır.
+    _btc_st_up: Optional[pd.Series] = None
+    if _is_m7 and M7_LONG_BTC_FILTER and btc_df is not None and "close" in btc_df.columns:
+        _btc_st_up = (btc_df["close"] > btc_df["close"].ewm(span=M7_BTC_FILTER_SPAN, adjust=False).mean())
+
     # 5) Tüm timestamp'leri birleştir (belirtilen pencere içindeki)
     all_ts = sorted(set(
         ts for sym, df in sym_ind.items()
@@ -1021,7 +1408,37 @@ def run_portfolio_backtest(
     # ── BTC uzun vadeli EMA sütunları (AdaptiveRegimeController için) ────────
     # Kısa vadeli ema_slow (200h ≈ 8 gün) BOĞA/AYI YÖN tespiti için yetersiz.
     # 168h (7 gün) ve 720h (30 gün) EMA ekleyerek gerçek döngü yönü tespit edilir.
-    if btc_ind is not None and "close" in btc_ind.columns:
+    #
+    # v26 MYOPIA FIX: 1m/5m modlarda (M6/M7) BTC verisi 1m olduğundan ema_720h =
+    # 720 dakika = 12 SAAT (30 gün DEĞİL) → rejim tespiti miyop → boğa haftası
+    # NEUTRAL görünüyor → M7 yükselişi kullanamıyor. Çözüm: BTC rejimini AYRI
+    # olarak 1h'da (~38 gün geçmişle) hesapla, sim index'ine ffill ile taşı.
+    # Controller kolonları doğrudan okur (yeniden hesaplamaz) → doğru rejim.
+    _regime_fixed = False
+    if timeframe in ("1m", "5m"):
+        try:
+            if start_date is not None:
+                _rs = (pd.Timestamp(start_date) - pd.Timedelta(days=38)).strftime("%Y-%m-%d")
+                _btc1h_raw = fetch_ohlcv("BTC/USDT", days=days + 40, timeframe="1h",
+                                         start_date=_rs, end_date=end_date)
+            else:
+                _btc1h_raw = fetch_ohlcv("BTC/USDT", days=days + 40, timeframe="1h")
+            _btc1h = prepare_indicators(_btc1h_raw, indicators_obj, timeframe="1h").copy()
+            _btc1h["ema_168h"] = _btc1h["close"].ewm(span=168, adjust=False).mean()  # 7-gün (1h)
+            _btc1h["ema_720h"] = _btc1h["close"].ewm(span=720, adjust=False).mean()  # 30-gün (1h)
+            if "ema_slow" not in _btc1h.columns and "ema_200" in _btc1h.columns:
+                _btc1h["ema_slow"] = _btc1h["ema_200"]
+            _rcols = [c for c in ("close", "ema_slow", "ema_200", "ema_168h", "ema_720h", "regime_score")
+                      if c in _btc1h.columns]
+            # 1h rejim kolonlarını sim (1m) index'ine ffill ile taşı
+            btc_ind = _btc1h[_rcols].reindex(btc_regime_df.index, method="ffill")
+            _regime_fixed = True
+            print(f"  [rejim] BTC 1h-bazlı rejim aktif ({len(_btc1h)} saatlik bar, ~{len(_btc1h)//24} gün)")
+        except Exception as e:
+            print(f"  [rejim] 1h rejim kurulamadı ({e}), 1m'e düşülüyor")
+            btc_ind = btc_regime_df
+
+    if not _regime_fixed and btc_ind is not None and "close" in btc_ind.columns:
         btc_ind = btc_ind.copy()  # orijinali değiştirme
         btc_ind["ema_168h"] = btc_ind["close"].ewm(span=168, adjust=False).mean()   # 7-gün EMA
         btc_ind["ema_720h"] = btc_ind["close"].ewm(span=720, adjust=False).mean()   # 30-gün EMA
@@ -1030,14 +1447,16 @@ def run_portfolio_backtest(
     _last_day: Optional[str] = None
 
     # Coin bazlı kümülatif PnL takibi kaldırıldı — rolling window kullanılıyor
-    # Her coinin kaybedebileceği max (son 30 günde): başlangıç sermayesinin %1.2'si
-    COIN_MAX_LOSS = initial_capital * 0.012
+    # Her coinin kaybedebileceği max (son 30 günde): başlangıç sermayesinin %1.0'i (v18: 1.2→1.0)
+    COIN_MAX_LOSS = initial_capital * 0.010
 
     # Son çıkış zamanı (re-entry cooldown için — coin_own_bull modda her türlü çıkış)
     # Dinamik: aktif semboller listesinden oluştur (yeni coin eklenince otomatik dahil olur)
     _active_syms = list(strategies.keys())
     coin_last_exit: dict[str, Optional[pd.Timestamp]] = {sym: None for sym in _active_syms}
     coin_last_stoploss: dict[str, Optional[pd.Timestamp]] = {sym: None for sym in _active_syms}
+    # v18: Ardışık SL sayacı — 3+ ardışık SL → 48 saat ek blok (revenge trading önlemi)
+    coin_consecutive_sl: dict[str, int] = {sym: 0 for sym in _active_syms}
 
     # Test süresi (M4 dinamik gate + M5 CB gate için)
     _test_duration_days = int((trade_end - trade_start).days)
@@ -1191,9 +1610,31 @@ def run_portfolio_backtest(
                         _zoom_trail = pos.trailing_mult * 1.50
                     elif _pnl_pct >= 0.06:         # %6+ kârda — hafif genişlet
                         _zoom_trail = pos.trailing_mult * 1.25
-                new_trail = price - _zoom_trail * atr
+                # M7 İYİLEŞTİRME #5 (ADX-ölçekli trailing) — TEST: NO-OP (etkisiz) → devre dışı.
+                # M5 trailing'i zaten çok geniş (5-8×) + M7'nin Sharpe-gate'li az işlemi ratchet-only
+                # trail'e nadiren ulaşıyor → 6ay/boğa/ayı birebir aynı. False → ölü, referans için.
+                if False and _is_m7:
+                    _adx_t = float(row.get("adx", 20.0))
+                    _adx_scale_t = float(np.clip(0.6 + (_adx_t - 18.0) / 22.0, 0.6, 1.7))
+                    _zoom_trail *= _adx_scale_t
+                # YENİ #16 — CHANDELIER EXIT (Chuck LeBeau): trail tepeye (en-yüksek-tepe) sabitlenir,
+                # fiyata değil → pullback'te gevşemez, momentum solunca çıkar. Kripto'da güçlü.
+                if _is_m7 and M7_TRAIL_MODE in ("supertrend", "psar", "kama") and "st_line" in df.columns:
+                    _stv = float(row.get("st_line", np.nan))   # ST/PSAR/KAMA çizgisi = trail (kırılınca çıkış)
+                    new_trail = _stv if not pd.isna(_stv) else (price - _zoom_trail * atr)
+                elif _is_m7 and M7_CHANDELIER and "high" in df.columns:
+                    _hh = float(df["high"].loc[:ts].iloc[-M7_CHAND_N:].max())
+                    new_trail = _hh - M7_CHAND_MULT * atr
+                else:
+                    new_trail = price - _zoom_trail * atr
                 if new_trail > pos.trail_price:
                     pos.trail_price = new_trail
+                # YENİ #15 — BREAKEVEN STOP: +M7_BE_TRIGGER kârdan sonra stop'u GİRİŞE çek.
+                # Kâr artık zarara DÖNEMEZ; ama pullback'te kesmez (sadece girişe dönerse çıkar) → #14'ün hafif/doğru hali.
+                if (_is_m7 and M7_BREAKEVEN_ON and pos.entry_price > 0
+                        and (price - pos.entry_price) / pos.entry_price >= M7_BE_TRIGGER):
+                    if pos.entry_price > pos.stop_price:
+                        pos.stop_price = pos.entry_price
                 hit_stop  = price <= pos.stop_price
                 hit_trail = price <= pos.trail_price
 
@@ -1223,14 +1664,25 @@ def run_portfolio_backtest(
                 # bear bounce'larda compound kayıp veriyordu)
                 _pyr_m6 = (_pyr_base and m6_mode and pos.pyramid_count < 4
                            and _adx_for_pyramid >= 24 and _btc_m1_active)
-                _pyr_m4 = (_pyr_base and not m6_mode and pos.pyramid_count < 2
+                # YENİ M7 İYİLEŞTİRME #2 — 3-BİRİM pyramiding (M5'in 2-biriminden agresif).
+                # Araştırma (iki ajan da upside lever): BTC>200MA (_btc_m1_active) + ADX>25 gate,
+                # azalan piramit (Turtle 1.0/0.6/0.4), kombine stop her eklemede yukarı (breakeven'a).
+                # M5'in m4-pyramid'ini (2 birim) M7'de devre dışı bırak, _pyr_m7'yi kullan.
+                _pyr_m7 = (_pyr_base and _is_m7 and pos.pyramid_count < 3
+                           and _btc_m1_active and _adx_for_pyramid >= 25)
+                _pyr_m4 = (_pyr_base and not m6_mode and not _is_m7 and pos.pyramid_count < 2
                            and m4_mode and _btc_m1_active and _adx_for_pyramid >= 28)
-                if _pyr_m6 or _pyr_m4:
+                if _pyr_m6 or _pyr_m7 or _pyr_m4:
                     if m6_mode:
                         # M6: v3 pyramid (sweet spot) + 4. moonshot birim korunuyor
                         _pyramid_thresholds = [0.05, 0.12, 0.22, 0.35]
                         _pyramid_sizes      = [0.60, 0.40, 0.25, 0.15]
                         _pyr_cash_cap       = 0.15
+                    elif _is_m7:
+                        # M7: 3 birim, azalan boyut. Eşikler 15m trend için (+%4/+%9/+%16 favorable).
+                        _pyramid_thresholds = [0.04, 0.09, 0.16]
+                        _pyramid_sizes      = [0.60, 0.40, 0.25]
+                        _pyr_cash_cap       = 0.12
                     else:
                         _pyramid_thresholds = [0.05, 0.12]
                         _pyramid_sizes      = [0.50, 0.25]
@@ -1257,8 +1709,69 @@ def run_portfolio_backtest(
                                     pos.stop_price = _new_stop
                             break  # Sadece bir eşik aynı anda kontrol edilsin
 
-            if hit_stop or hit_trail:
-                reason = "stop_loss" if hit_stop else "trailing_stop"
+            # ── M7: Hızlı kâr alma + time-stop (scalp & rotate çekirdeği) ────
+            hit_tp = hit_time = hit_maxhold = False
+            # YENİ M7 İYİLEŞTİRME #8 — EMA9 HIZLI ÇIKIŞ (ampirik: <EMA9 en hızlı, %8.6 give-back).
+            # "İlk düşüşte hemen çık": fiyat EMA9 ALTINA düşerse VE pozisyon henüz kâra geçmemişse
+            # (pnl<+%0.5) erken kaybedeni KES. Kâra geçmiş kazananlar EMA9'a takılmaz → trailing'e
+            # bırakılır (yükselen coini DAHA FAZLA TUT). Tam istenen asimetri.
+            # M7 İYİLEŞTİRME #8 (EMA9 hızlı çıkış) — TEST: FELAKET (6ay -1.80→-4.27%, WR %35→21).
+            # EMA9 her normal geri çekilmede tetikleniyor → kazananları whipsaw'la kesiyor.
+            # Ampirik "give-back %8.6" yanlış-çıkış maliyetini gizliyordu → devre dışı.
+            hit_fastexit = False
+            if False and _is_m7 and not pos.is_short and pos.entry_price > 0 and pos.bars_held >= 2:
+                _e9 = float(row.get("ema9", price) or price)
+                _pnl_fe = (price - pos.entry_price) / pos.entry_price
+                if price < _e9 and _pnl_fe < 0.005:
+                    hit_fastexit = True
+            if m7_mode and pos.entry_price > 0:
+                if pos.is_short:
+                    _m7_pnl_pct = (pos.entry_price - price) / pos.entry_price
+                else:
+                    _m7_pnl_pct = (price - pos.entry_price) / pos.entry_price
+                _m7_adx = float(row.get("adx", 0.0))
+                # 0) BREAKEVEN STOP — +%0.4 kârdan sonra stop'u GİRİŞE çek (ücretsiz opsiyon):
+                #    kazanan pozisyon artık kaybettiremez. "Kazananı kaybettirme" problemini çözer.
+                if _m7_pnl_pct >= M7_BREAKEVEN_PCT:
+                    if pos.is_short:
+                        pos.stop_price = min(pos.stop_price, pos.entry_price)
+                    else:
+                        pos.stop_price = max(pos.stop_price, pos.entry_price)
+                # RUNNER: coin kendi bull'unda + güçlü ADX → sabit TP YOK; trailing ile
+                # büyük trendi yakala (yükselişte "exceptional profit" beklentisi buradan gelir).
+                _m7_runner = (not pos.is_short) and pos.is_coin_bull and _m7_adx >= M7_RUNNER_ADX
+                # 1) Hızlı sabit TP — runner olmayan pozisyonlar hedefte kapanır (kârı bankala, rotasyona geç)
+                if (not _m7_runner) and _m7_pnl_pct >= M7_TP_PCT:
+                    hit_tp = True
+                # 2) Time-stop — N bar içinde anlamlı ilerleme yoksa çık (sermayeyi serbest bırak)
+                if (not hit_tp) and pos.bars_held >= M7_TIME_STOP_BARS and _m7_pnl_pct < M7_TIME_STOP_PROGRESS:
+                    hit_time = True
+                # 3) Sert tavan — runner olmayanları M7_MAX_HOLD_BARS sonra zorla kapat
+                if (not _m7_runner) and (not hit_tp) and pos.bars_held >= M7_MAX_HOLD_BARS:
+                    hit_maxhold = True
+
+            # YENİ #14 — KÂR-KİLİT ÇIKIŞI: LONG kârdayken (≥min net kâr) son N mum ART ARDA düşmüşse
+            # kârı KİLİTLE, hemen çık → kâr zarara dönmesin (kullanıcı fikri: 2 kırmızı mum).
+            hit_profitlock = False
+            if (_is_m7 and M7_PROFIT_LOCK and not pos.is_short and pos.entry_price > 0
+                    and price >= pos.entry_price * (1.0 + M7_LOCK_MIN_PNL)):
+                _cl = df["close"].loc[:ts]
+                if len(_cl) >= M7_LOCK_DOWN_BARS + 1:
+                    _seq = _cl.iloc[-(M7_LOCK_DOWN_BARS + 1):].values
+                    if all(_seq[i] < _seq[i - 1] for i in range(1, len(_seq))):  # N mum art arda düşüş
+                        # Coin HÂLÂ güçlü trenddeyse kilitleme → #13 ride etsin (kazananı kesme).
+                        # Sadece coin ZAYIFLADIYSA kârı kilitle (fade eden pozisyonun kârını koru).
+                        if not (M7_LOCK_SKIP_STRONG and _coin_still_pumping(df.loc[:ts], adx_min=M7_HOLD_ADX)):
+                            hit_profitlock = True
+
+            if hit_stop or hit_trail or hit_tp or hit_time or hit_maxhold or hit_fastexit or hit_profitlock:
+                if   hit_stop:        reason = "stop_loss"
+                elif hit_profitlock:  reason = "profit_lock"   # #14: kârdayken 2 mum düşüş → kâr kilitle
+                elif hit_trail:       reason = "trailing_stop"
+                elif hit_fastexit:    reason = "fast_exit"   # EMA9 hızlı çıkış = erken kayıp kesme (SL-zinciri tetiklemez)
+                elif hit_tp:          reason = "take_profit"
+                elif hit_time:        reason = "time_stop"
+                else:                 reason = "max_hold"
                 if pos.is_short:
                     # SHORT kapama: daha pahalıya geri al → ters PnL
                     exit_px      = price * (1 + SLIPPAGE)
@@ -1285,6 +1798,9 @@ def run_portfolio_backtest(
                 # LONG SL cooldown kaydı: SHORT SL'de cooldown yok (D2 SHORT zinciri korunur)
                 if reason == "stop_loss" and not pos.is_short:
                     coin_last_stoploss[sym] = ts
+                    coin_consecutive_sl[sym] = coin_consecutive_sl.get(sym, 0) + 1
+                else:
+                    coin_consecutive_sl[sym] = 0  # SL dışı çıkış → sayacı sıfırla
                 coin_last_exit[sym] = ts
                 correlation_registry.register_close(sym)
                 daily_pnl_today += pos.pnl
@@ -1302,6 +1818,12 @@ def run_portfolio_backtest(
             if ts not in df.index:
                 continue
             open_positions[sym].bars_held += 1
+            # M7: base momentum should_exit'i KULLANMAZ. O çıkış, momentum aşağıyken
+            # tetiklenir — pullback girişinde (dip = momentum aşağı) pozisyonu ANINDA
+            # öldürür (sıçramayı bekleyemez). M7 yalnızca kendi TP/time-stop/trailing/
+            # max-hold ile çıkar (ilk döngüde). bars_held yine arttı (time-stop için).
+            if m7_mode:
+                continue
             # Minimum hold time: erken çıkışları engelle
             if open_positions[sym].bars_held < open_positions[sym].min_hold_bars:
                 continue
@@ -1314,6 +1836,15 @@ def run_portfolio_backtest(
             except Exception:
                 should_exit = False
             if should_exit:
+                # YENİ #13 — TREND-GÜCÜ HOLD: coin HÂLÂ güçlü aktif uptrend'deyse (yeni-zirve+ADX+EMA)
+                # strategy_exit'i bastır → güçlü pumper'da kal, tam kâr al (BNB tarzı). Trail/SL hâlâ
+                # aktif → coin zayıflayınca normal çıkar. Sadece M7 LONG, sadece knob açıkken.
+                if _is_m7 and M7_TREND_HOLD:
+                    _hpos = open_positions[sym]
+                    if (not _hpos.is_short) and _coin_still_pumping(slice_df, adx_min=M7_HOLD_ADX):
+                        continue  # LONG: coin hâlâ güçlü yükselişte → çıkma, ride et
+                    if _hpos.is_short and M7_TREND_HOLD_SHORT and _coin_still_dumping(slice_df, adx_min=M7_HOLD_ADX):
+                        continue  # SHORT: coin hâlâ güçlü düşüşte → çıkma, ride et
                 pos = open_positions[sym]
                 price = float(df.loc[ts, "close"])
                 if pos.is_short:
@@ -1338,6 +1869,7 @@ def run_portfolio_backtest(
                 del open_positions[sym]
                 closed_trades.append(pos)
                 coin_last_exit[sym] = ts
+                coin_consecutive_sl[sym] = 0  # strateji çıkışı = SL zinciri kırıldı
                 correlation_registry.register_close(sym)
                 daily_pnl_today += pos.pnl
                 strategies[sym].record_outcome(sym, pos.pnl > 0, pnl=pos.pnl)
@@ -1350,6 +1882,9 @@ def run_portfolio_backtest(
         # Rejim kontrolöründen gelen dinamik limitler kullanılır
         eff_max = _current_regime_params.max_positions
         pos_size_mult = _current_regime_params.position_size_mult
+        # M7: sabit eşzamanlı pozisyon limiti (rejimden bağımsız) — HFT korelasyon riski sınırı
+        if m7_mode:
+            eff_max = M7_MAX_POSITIONS
 
         if daily_loss_ok and len(open_positions) < eff_max:
             # Universe modunda rejime göre coin sayısını dinamik kısıtla
@@ -1361,6 +1896,23 @@ def run_portfolio_backtest(
                 candidate_syms = all_candidates[:max_coins_for_regime]
             else:
                 candidate_syms = all_candidates
+
+            # M7: MOMENTUM ROTASYONU — adayları coin'in kendi TS-momentum'una göre sırala.
+            # Araştırma: cross-sectional (coinler-arası) momentum maliyetten sonra zayıf;
+            # time-series momentum (coinin KENDİ trendi) sağlam → tsmom skoruna göre sırala.
+            # En güçlü trendli coine önce sermaye ayır (slot dolmadan en iyi fırsat girilsin).
+            if m7_mode:
+                def _m7_momentum(s: str) -> float:
+                    _d = sym_ind.get(s)
+                    if _d is None or ts not in _d.index:
+                        return -1e9
+                    _v = _d.loc[ts].get("tsmom", 0.0)
+                    try:
+                        _f = float(_v)
+                    except (TypeError, ValueError):
+                        return -1e9
+                    return _f if not pd.isna(_f) else -1e9
+                candidate_syms = sorted(candidate_syms, key=_m7_momentum, reverse=True)
             for sym in candidate_syms:
                 if sym in open_positions:
                     continue
@@ -1404,6 +1956,13 @@ def run_portfolio_backtest(
                 # BULL/STRONG_BULL tespiti (entry_score_boost negatif = daha kolay giriş)
                 in_global_bull   = _current_regime_params.entry_score_boost <= -0.03
                 coin_own_bull    = coin_above_ema200  # coin kendi EMA200'ü üzerinde
+                # ASİMETRİK M7 (kullanıcı fikri): SHORT'lar M5-gibi mi? AUTO(2)=yalnız onaylı ayıda.
+                # Ayı-dışında M7-seçici kalır → 6-ayı korur; ayıda agresif → short kârını yakalar.
+                _m5_shorts = _is_m7 and (
+                    M7_SHORTS_LIKE_M5 == 1
+                    or (M7_SHORTS_LIKE_M5 == 2 and in_global_bear)
+                    or (M7_SHORTS_LIKE_M5 == 3 and in_strong_bear)   # yalnız ŞİDDETLİ ayı (6-ayda nadir)
+                )
 
                 # Kısıtlama seviyeleri:
                 #   coin_own_bull=True  → global bear'a rağmen neredeyse normal giriş
@@ -1462,6 +2021,15 @@ def run_portfolio_backtest(
                 if rolling_pnl_30d < -COIN_MAX_LOSS:
                     continue
 
+                # 1b) v19: Ardışık SL sayacı — 4+ ardışık stop-loss → 36 saat ek bekleme
+                # v18'de 3 SL eşiği TRX gibi yavaş trendli coinleri erken bloke etti.
+                # 4 ardışık SL daha gerçekçi "kaybetme ortamı" göstergesi
+                # m5_guard: M6 bu filtreyi kullanmaz (M6 davranışı değişmesin)
+                if (m5_mode or m4_mode or m7_mode) and coin_consecutive_sl.get(sym, 0) >= 4:
+                    _last_sl_ts = coin_last_stoploss.get(sym)
+                    if _last_sl_ts is not None and (ts - _last_sl_ts) < pd.Timedelta(hours=36):
+                        continue  # ardışık 4 SL → piyasa yönü kayboldu, 36 saat dinlen
+
                 # M4v13: Performans-bazlı pozisyon boost (BTC BULL modunda)
                 # Coinin son 30 günlük performansına göre boost ver:
                 #   Kârlı coin (+$30 üstü) → %30 ek pozisyon (gerçek trend yakalansın)
@@ -1497,6 +2065,7 @@ def run_portfolio_backtest(
                         continue
 
                 # 3) ADX: güçlü trend şart
+                _is_neutral = not in_global_bear and not in_global_bull  # v18: erken hesapla
                 if "adx" in slice_df.columns:
                     adx_val = float(slice_df["adx"].iloc[-1])
                     # Coin EMA200'e yakınsa (±5%) → sideways piyasa → daha yüksek ADX şart
@@ -1505,42 +2074,106 @@ def run_portfolio_backtest(
                         min_adx = 27 if ema_gap_pct < 0.05 else (22 if coin_own_bull else 18)
                     else:
                         min_adx = 22 if coin_own_bull else 18
-                    # v17: NEUTRAL rejimde trend belirsiz → ADX eşiğini +5 artır
-                    _is_neutral = not in_global_bear and not in_global_bull
-                    if _is_neutral:
-                        min_adx += 5
+                    # v18: NEUTRAL rejimde trend yok → ADX eşiğini artır
+                    # m5_guard: M5/M4 → +10 (daha seçici), M6 → +5 (orijinal davranış)
+                    # M7 neutral inflation ALMAZ: +10 (→35) sadece exhaustion spike'larını
+                    # alıyordu (tepe noktası → stall). M7 kendi 25 floor'u + HTF + hacim gate'i kullanır.
+                    if _is_neutral and not m7_mode:
+                        min_adx += 10 if (m5_mode or m4_mode) else 5
+                    # M7: ADX ≥ 28 hard floor — yalnızca GÜÇLÜ trend backdrop'unda dip al.
+                    # Daha seçici → daha az ama daha kaliteli işlem (komisyon yükünü azaltır).
+                    if m7_mode:
+                        min_adx = max(min_adx, 28)
                     if adx_val < min_adx:
                         continue
 
-                # 4) ATR kalite: %60 minimum
+                # 4) ATR kalite filtresi
+                # m5_guard: M5/M4 → NEUTRAL=0.70 / diğer=0.60 (daha seçici)
+                #           M6  → sabit 0.60 (orijinal davranış)
                 if "atr" in slice_df.columns and len(slice_df) >= 50:
                     atr_mean = float(slice_df["atr"].tail(50).mean())
-                    if atr_mean > 0 and atr < atr_mean * 0.60:
+                    _atr_floor = (0.70 if _is_neutral else 0.60) if (m5_mode or m4_mode or m7_mode) else 0.60
+                    if atr_mean > 0 and atr < atr_mean * _atr_floor:
+                        continue  # piyasa gerçekten hareketsiz → sinyal gürültü
+
+                # 4b) v19: NEUTRAL Choppiness filtresi KALDIRILDI (aşağıda)
+
+                # M7 İYİLEŞTİRME #3 (ER gate) — TEST EDİLDİ, ZARARLI → devre dışı.
+                # Kaufman Efficiency Ratio < 0.30 → işlem yok denendi; ama kazanan trendleri de
+                # kesti: ayı +0.18%→-0.04%, 6-ay -2.93%→-3.70%. M5'in choppiness filtresi yeterli.
+                # (False → ölü; kod referans için bırakıldı.)
+                if False and _is_m7 and len(slice_df) > 11:
+                    _erc = slice_df["close"].tail(11).to_numpy(dtype=float)
+                    _er_net  = abs(_erc[-1] - _erc[0])
+                    _er_path = float(np.abs(np.diff(_erc)).sum())
+                    _er = (_er_net / _er_path) if _er_path > 0 else 0.0
+                    if _er < 0.30:
                         continue
 
-                # 5) 7-günlük WR filtresi: tüm coinlere uygula (kayıp serisi sonrası dur)
-                sym_trades_wr = [t for t in closed_trades if t.symbol == sym]
-                sym_recent_7d = [t for t in sym_trades_wr
-                                 if t.exit_time is not None and ts - t.exit_time < pd.Timedelta(days=7)]
-                if len(sym_recent_7d) >= 3:
-                    recent_wr = sum(1 for t in sym_recent_7d if t.pnl > 0) / len(sym_recent_7d)
-                    if recent_wr < 0.40:
-                        continue
+                # 5) Kayan WR filtresi: son 10 günde min WR %38 (v19 uzlaşma)
+                # m5_guard: M6 bu filtreyi kullanmaz; M7 kullanır (kayıp serisini durdur)
+                if m5_mode or m4_mode or m7_mode:
+                    sym_trades_wr = [t for t in closed_trades if t.symbol == sym]
+                    sym_recent_10d = [t for t in sym_trades_wr
+                                      if t.exit_time is not None and ts - t.exit_time < pd.Timedelta(days=10)]
+                    if len(sym_recent_10d) >= 4:
+                        recent_wr = sum(1 for t in sym_recent_10d if t.pnl > 0) / len(sym_recent_10d)
+                        if recent_wr < 0.38:
+                            continue  # son 10 günde %38 altı WR → kayıp serisi devam ediyor
 
                 # 6) Breakout filtresi: yavaş trendli coinlerde (yalnızca breakout_bars > 0 ise)
+                # M7 ATLAR: breakout = fiyat tepeye yakın; pullback = fiyat dipte → çelişir
                 _bo_bars = coin_risk[sym].get("breakout_bars", 0)
-                if _bo_bars > 0 and len(slice_df) >= _bo_bars:
+                if (not m7_mode) and _bo_bars > 0 and len(slice_df) >= _bo_bars:
                     _recent_high = float(slice_df["high"].tail(_bo_bars).max())
                     if price < _recent_high * 0.995:
                         continue
+
+                # 7) v23: Hacim (Volume) kalite filtresi
+                # m5_guard: M6 bu filtreyi kullanmaz (M6 davranışı değişmesin)
+                # M7 ATLAR: pullback (dip) girişleri DÜŞÜK hacimli olur (sağlıklı geri çekilme);
+                # yüksek hacim gate'i tam da almak istediğimiz dipleri bloklardı.
+                if (m5_mode or m4_mode) and "volume" in slice_df.columns and len(slice_df) >= 20:
+                    _vol_mean = float(slice_df["volume"].tail(20).mean())
+                    _vol_now  = float(slice_df["volume"].iloc[-1])
+                    # v24: NEUTRAL'da 1.15× (daha sıkı), diğer rejimlerde 0.90×
+                    _vol_mult = 1.15 if _is_neutral else 0.90
+                    if _vol_mean > 0 and _vol_now < _vol_mean * _vol_mult:
+                        continue  # hacim yetersiz → sahte breakout riski yüksek
                 # ────────────────────────────────────────────────────────
 
-                try:
-                    signal = strategies[sym].generate_signal(
-                        sym, slice_df, allow_short=True,
-                    )
-                except Exception:
-                    continue
+                if m7_mode:
+                    # M7: base momentum stratejisi yerine PULLBACK sinyali (dip al / ralli sat)
+                    _m7_side, _m7_conf, _m7_reason = _m7_signal(slice_df)
+                    if _m7_side not in (Side.BUY, Side.SHORT):
+                        continue
+                    signal = Signal(symbol=sym, side=_m7_side, reason=_m7_reason,
+                                    timestamp=ts.to_pydatetime(), price=price,
+                                    confidence_score=_m7_conf, atr=atr)
+                else:
+                    try:
+                        signal = strategies[sym].generate_signal(
+                            sym, slice_df, allow_short=True,
+                        )
+                    except Exception:
+                        continue
+
+                # YENİ M7 İYİLEŞTİRME #7 — HMA20 ERKEN GİRİŞ (ampirik kanıtlı).
+                # Base strateji HENÜZ HOLD'ken HMA20 yükselişe dönerse M7 ERKEN LONG açar
+                # (HMA yükselişi EMA200'den ~%27 daha erken yakalar → daha erken pozisyon).
+                # Aşağıdaki gate'ler (Sharpe-seçim, rejim, ADX, hacim) yine uygulanır → kalite korunur.
+                _m7_hma_early = False
+                if _is_m7 and signal.side not in (Side.BUY, Side.SHORT) and "hma20" in slice_df.columns:
+                    _hm = slice_df["hma20"]
+                    if len(_hm) > 6:
+                        _h_now, _h_prev = float(_hm.iloc[-1]), float(_hm.iloc[-4])
+                        _pclose = float(slice_df["close"].iloc[-2])
+                        if (not pd.isna(_h_now) and not pd.isna(_h_prev)
+                                and _h_now > _h_prev and price > _h_now and price > _pclose):
+                            signal = Signal(symbol=sym, side=Side.BUY, reason="hma_early",
+                                            timestamp=ts.to_pydatetime(), price=price,
+                                            confidence_score=0.62, atr=atr)
+                            _m7_hma_early = True
 
                 is_short_signal = signal.side == Side.SHORT
                 if signal.side not in (Side.BUY, Side.SHORT):
@@ -1550,8 +2183,52 @@ def run_portfolio_backtest(
                 ema_col = next((c for c in ("ema_50", "ema50", "ema_fast") if c in slice_df.columns), None)
 
                 if not is_short_signal:
+                    # YENİ M7 İYİLEŞTİRME #4 — AdaptiveTrend trailing-Sharpe coin seçimi (LONG).
+                    # Sadece güçlü, DÜZGÜN risk-ayarlı uptrend'i olan coinleri AL → choppy
+                    # coinleri eler (6-aylık chop kaybının esas kaynağı). M5'in yapmadığı seçim.
+                    # #17/#19 — HMA-erken Sharpe-kapı BYPASS'ı (erken giriş için):
+                    #   #17 (M7_HMA_EXEMPT): HER HMA-erken atlar → FELAKET (gürültü flood, 6ay -10).
+                    #   #19 (M7_VOL_CONFIRM): yalnız HACİM-PATLAMALI HMA-erken atlar → gürültü elenir, gerçek pump geçer.
+                    _hma_bypass = False
+                    if _is_m7 and _m7_hma_early:
+                        if M7_HMA_EXEMPT:
+                            _hma_bypass = True
+                        elif M7_VOL_CONFIRM and "volume" in slice_df.columns and "volume_sma" in slice_df.columns:
+                            _v   = float(slice_df["volume"].iloc[-1])
+                            _vma = float(slice_df["volume_sma"].iloc[-1])
+                            if not pd.isna(_vma) and _vma > 0 and _v >= _vma * M7_VOL_SPIKE:
+                                _hma_bypass = True   # hacim patlaması = gerçek pump teyidi → erken gir
+                    if _is_m7 and not _hma_bypass:
+                        _shp = _coin_trailing_sharpe(slice_df, _bpd)
+                        # YENİ #9 — REJİM-ADAPTİF SEÇİCİLİK (opt-in, VARSAYILAN KAPALI = no-op).
+                        # Knob açıksa (M7_SHARPE_LONG_BULL<0) ve temiz-güçlü boğadaysak (in_global_bull +
+                        # coin ADX≥M7_BULL_ADX) LONG kapısını gevşet → boğa upside'ını yakala (+1.49%).
+                        # always-on test: 6ay -1.70→-5.6 bozdu (gecikmeli ADX choppy-boğayı ayıramadı)
+                        # → varsayılan kapalı; canlıda kesin-boğada elle açılır.
+                        _shp_long_thr = M7_SHARPE_LONG
+                        if M7_SHARPE_LONG_BULL < M7_SHARPE_LONG and in_global_bull:
+                            _coin_adx = float(slice_df["adx"].iloc[-1]) if "adx" in slice_df.columns else 0.0
+                            if not pd.isna(_coin_adx) and _coin_adx >= M7_BULL_ADX:
+                                _shp_long_thr = M7_SHARPE_LONG_BULL  # temiz boğa → gevşek kapı
+                        if not pd.isna(_shp) and _shp < _shp_long_thr:
+                            continue  # zayıf/choppy risk-ayarlı momentum → LONG açma
+
+                    # YENİ #10 — KARŞI-TREND LONG FİLTRESİ (M5 canlı tanısı).
+                    # M7 LONG'u SADECE coin kendi uptrend'inde (EMA200 üstü) aç → düşen coine girme.
+                    # coin_own_bull şu an yalnız NEUTRAL/ayıda zorunlu; bu onu TÜM rejimlere yayar (M7).
+                    if _is_m7 and M7_LONG_OWN_BULL and not coin_own_bull:
+                        continue  # coin kendi ayı trendinde → karşı-trend LONG açma
+
+                    # YENİ #11 — BTC KISA-VADE ROLLOVER FİLTRESİ (son hafta tanısı: piyasa-geneli dip).
+                    # BTC ~2g EMA altındaysa (piyasa kısa-vade zayıf) M7 LONG açma → market dip'inde girme.
+                    if _is_m7 and _btc_st_up is not None:
+                        _bv = _btc_st_up.asof(ts)
+                        if _bv is not None and not pd.isna(_bv) and not bool(_bv):
+                            continue  # BTC kısa-vade düşüyor → karşı-trend market'te LONG açma
+
                     # LONG-specific: EMA50 onayı (son 3 bar close > EMA50 olmalı)
-                    if ema_col and len(slice_df) >= 3:
+                    # HMA-erken girişte ATLA (HMA zaten EMA50'den önce yükselişi onaylar → erken giriş)
+                    if ema_col and len(slice_df) >= 3 and not m7_mode and not _m7_hma_early:
                         last3 = slice_df.tail(3)
                         if not (last3["close"] > last3[ema_col]).all():
                             continue
@@ -1569,9 +2246,36 @@ def run_portfolio_backtest(
                     if in_strong_bear or (in_global_bear and not coin_own_bull):
                         continue
 
+                    # v20: NEUTRAL'da LONG filtresi — coin kendi EMA200'ü üzerinde olmalı
+                    # v25fix: Tüm modellere uygulandı (M6 dahil)
+                    # Neden: NEUTRAL rejim + coin EMA200 altı = çift yönlü belirsizlik → LONG anlamsız
+                    # M6 live'da bunu kaçırıyordu: NEUTRAL'a dönen rejimde EMA200 altı coinlere LONG açıyordu
+                    if _is_neutral and not coin_own_bull:
+                        continue  # NEUTRAL + coinin kendi ayı trendi = LONG yasak (tüm modeller)
+
+                    # M7 İYİLEŞTİRME #1 (MTF gate) — TEST EDİLDİ, YARDIMCI OLMADI → devre dışı.
+                    # Sebep: M5 zaten 1h trend hizalamasını EMA200 + internal mtf_filter ile yapıyor;
+                    # ekstra htf gate redundant (boğada -0.26%, ayı/yatay değişmedi). m7_mode=False → ölü.
+                    if m7_mode:
+                        _htf_up = bool(slice_df["htf_trend_up"].iloc[-1]) if "htf_trend_up" in slice_df.columns else True
+                        if not _htf_up:
+                            continue
+
                 else:
+                    # YENİ M7 İYİLEŞTİRME #4 — trailing-Sharpe coin seçimi (SHORT, stricter).
+                    # Sadece güçlü, düzgün AŞAĞI risk-ayarlı momentumu olan coinleri SAT.
+                    # Paper: short'a girmek için daha yüksek bar (γ_short > γ_long).
+                    # _m5_shorts açıksa ATLA → SHORT seçimi M5-gibi (kapısız, full).
+                    if _is_m7 and not _m5_shorts:
+                        _shp = _coin_trailing_sharpe(slice_df, _bpd)
+                        if not pd.isna(_shp) and _shp > -M7_SHARPE_SHORT:
+                            continue  # yeterince güçlü düşüş momentumu yok → SHORT açma
+                    # M7(eski 1m) counter-trend SHORT bloğu — m7_mode=False → ölü
+                    if m7_mode and not in_global_bear:
+                        continue
                     # SHORT-specific: EMA50 aşağıda olmalı (son 2 bar close < EMA50)
-                    if ema_col and len(slice_df) >= 2:
+                    # M7 ATLAR: ralli satışında fiyat EMA50'ye doğru sıçramış olur → gate çelişir
+                    if ema_col and len(slice_df) >= 2 and not m7_mode:
                         last2 = slice_df.tail(2)
                         if not (last2["close"] < last2[ema_col]).all():
                             continue  # EMA50 üzerindeyken short açma
@@ -1584,6 +2288,12 @@ def run_portfolio_backtest(
                             continue  # 14 günde %5+ yükseldiyse short açma
                         if change_14d < -0.25:
                             continue  # 14 günde %25+ düştüyse short açma: aşırı satım → bounce riski
+
+                    # M7 İYİLEŞTİRME #1 (MTF gate SHORT) — devre dışı (yukarıdaki sebep). m7_mode=False → ölü.
+                    if m7_mode:
+                        _htf_up = bool(slice_df["htf_trend_up"].iloc[-1]) if "htf_trend_up" in slice_df.columns else False
+                        if _htf_up:
+                            continue
 
                 # ── M5-3: Re-entry Cooldown (v4) ─────────────────────────────────────
                 # Stop hit'ten sonra M5_COOLDOWN_DAYS gün aynı coinden uzak dur.
@@ -1610,13 +2320,6 @@ def run_portfolio_backtest(
                 if is_short_signal and not in_global_bear:
                     continue  # NEUTRAL/BULL zaten üstte bloklandı; burada NEUTRAL guard
 
-                # ── v17: ADX minimum kalite filtresi ─────────────────────────────────
-                # ADX < 18 → düz/choppy piyasa, trend-following sinyali anlamsız
-                # Bu tek filtre ile NEUTRAL rejimde çok sayıda gürültü işlem engellenir.
-                _adx_min = 22 if is_short_signal else 18
-                if _adx_now < _adx_min:
-                    continue  # trend gücü yetersiz → giriş yasak
-
                 # ── M5-2: Circuit Breaker — DD > %22 ise yeni giriş yok ────────────
                 # Sadece çok yıllık testlerde (>400 gün) aktif
                 if _m5_cb_active and _cb_mult == 0.0:
@@ -1624,8 +2327,18 @@ def run_portfolio_backtest(
 
                 # Pozisyon boyutu: per-coin efektif büyüklük çarpanı
                 risk_pct = coin_risk[sym].get("risk_per_trade", RISK_PER_TRADE)
+                # M7: scalper → düşük per-trade risk (çok işlem; her biri küçük, toplam varyans kontrollü)
+                if m7_mode:
+                    risk_pct = M7_RISK_PER_TRADE
                 # ADX scale: güçlü trendlerde daha büyük pozisyon (Turtle Trading prensibi)
                 _adx_now = float(slice_df["adx"].iloc[-1]) if "adx" in slice_df.columns else 20
+
+                # ── v17: ADX minimum kalite filtresi ─────────────────────────────────
+                # ADX < 18 → düz/choppy piyasa, trend-following sinyali anlamsız
+                # Bu tek filtre ile NEUTRAL rejimde çok sayıda gürültü işlem engellenir.
+                _adx_min = 22 if is_short_signal else 18
+                if _adx_now < _adx_min:
+                    continue  # trend gücü yetersiz → giriş yasak
                 adx_scale = strategies[sym].get_adx_scale(_adx_now) if hasattr(strategies[sym], 'get_adx_scale') else 1.0
                 # Kelly fraction: geçmiş işlemlerden dinamik boyut
                 _sym_past = [t for t in closed_trades if t.symbol == sym and t.exit_time is not None]
@@ -1678,6 +2391,20 @@ def run_portfolio_backtest(
                 # SHORT sinyalde global ayı teyidi yoksa (%70 boyut — geçiş döneminde yanlış SHORT riski)
                 if is_short_signal and not in_global_bear:
                     combined_mult *= 0.65
+                # YENİ M7 İYİLEŞTİRME #6 (λ=0.55 long-tilt) — AKTİF (tam yığında diriliş).
+                # SHORT boyutunu ×0.55 kısarak kitabı LONG'a eğer. Eski tabanda getiriyi düşürmüştü;
+                # HMA+Sharpe yığınıyla SHORT kitabı net yük → kısmak 6-ay getiri+%0.10 & DD−%28 verir.
+                # Bull değişmez (zaten short yok); ayı getiri +0.11→+0.03 (hâlâ +) ama ayı DD yarıya iner.
+                # M7_LAMBDA_TILT=1.0 → kapalı, 0.43 → daha düşük-DD varyant.
+                if _is_m7 and is_short_signal and M7_LAMBDA_TILT < 1.0 and not _m5_shorts:
+                    combined_mult *= M7_LAMBDA_TILT
+                # YENİ #12 — BOĞA LONG SIZE BOOST: onaylı boğada (in_global_bull) coin kendi uptrend'indeyse
+                # LONG size'ı büyüt. SELECTION değil SIZING → düşük-kalite eklemez, Sharpe+#10 filtreli
+                # kaliteli LONG'u amplifies eder (boğada M5'in genişlik+erken avantajına sizing ile yanıt).
+                _m7_bull_long = (_is_m7 and not is_short_signal and in_global_bull
+                                 and coin_own_bull and M7_BULL_LONG_BOOST > 1.0)
+                if _m7_bull_long:
+                    combined_mult = min(combined_mult * M7_BULL_LONG_BOOST, 4.0)
                 risk_pct_adj = risk_pct * combined_mult
                 if _is_high_conf_bull:
                     # M6 v9: BTC bull onayında SÜPER (×2.6/×3.0), bear/nötr → DEFANSİF (×1.0)
@@ -1695,7 +2422,20 @@ def run_portfolio_backtest(
 
                 # v17: Per-coin min_stop_pct (varsayılan %0.6, TRX gibi low-vol için %1.5)
                 _min_stop_pct = coin_risk[sym].get("min_stop_pct", 0.006)
-                if is_short_signal:
+                if m7_mode:
+                    # M7: STRUCTURE-BASED stop — dip dibinin altına (LONG) / ralli tepesinin
+                    # üstüne (SHORT). Pullback içi gürültü stop'lamaz, gerçek kırılım stop'lar.
+                    # Makul aralığa sıkıştır: min %0.3 (1m gürültü bandı üstü), max %1.0.
+                    _m7_lb = min(8, len(slice_df))
+                    if is_short_signal:
+                        _struct = float(slice_df["high"].tail(_m7_lb).max())
+                        stop_dist = float(np.clip(_struct - price, price * 0.003, price * 0.010))
+                        stop_px = price + stop_dist
+                    else:
+                        _struct = float(slice_df["low"].tail(_m7_lb).min())
+                        stop_dist = float(np.clip(price - _struct, price * 0.003, price * 0.010))
+                        stop_px = price - stop_dist
+                elif is_short_signal:
                     stop_px   = price + atr_stop * atr   # SHORT stop: yukarıda
                     stop_dist = max(stop_px - price, price * _min_stop_pct)
                 else:
@@ -1725,6 +2465,8 @@ def run_portfolio_backtest(
                     else:
                         _max_pos_pct = min(_max_pos_pct * 1.5, 0.35)   # 20% → 30% (max 35%)
                 _pos_cap = (3.0 if m6_mode else 2.0) if _is_high_conf_bull else 1.5
+                if _m7_bull_long:
+                    _pos_cap = max(_pos_cap, M7_BULL_LONG_BOOST * 1.5)  # #12 boost'un notional cap'e akması için
                 max_cost = balance * _max_pos_pct * min(combined_mult, _pos_cap)
                 if size * price > max_cost:
                     size = max_cost / price
@@ -1739,8 +2481,9 @@ def run_portfolio_backtest(
                     # SHORT giriş: daha düşük fiyattan sat (slippage ters)
                     fill_price = price * (1 - SLIPPAGE)
                     entry_comm = fill_price * size * COMMISSION
-                    # Marjin rezerv = potansiyel maks kayıp
-                    total_cost = atr_stop * atr * size + entry_comm
+                    # Marjin rezerv = potansiyel maks kayıp (M7: structure stop mesafesi)
+                    _margin_dist = stop_dist if m7_mode else (atr_stop * atr)
+                    total_cost = _margin_dist * size + entry_comm
                 else:
                     fill_price = price * (1 + SLIPPAGE)
                     entry_comm = fill_price * size * COMMISSION
@@ -1774,11 +2517,19 @@ def run_portfolio_backtest(
                 # M6 1m için min hold çok kısa olur — bu yüzden bar oranıyla scale ediyoruz
                 _hold_scale = _bpd / 24  # 1h:1, 15m:4, 1m:60
                 hold_bars = int((12 if coin_own_bull else 6) * _hold_scale)
+                # M7: scalper → çok kısa min hold (hızlı TP/time-stop çıkışlarına izin ver).
+                # M6'nın 12 saatlik (720 bar) min-hold'u scalping'i imkansız kılardı.
+                if m7_mode:
+                    hold_bars = M7_MIN_HOLD_BARS
 
                 pos = PPos(
                     symbol=sym,
                     entry_price=fill_price,
-                    stop_price=(fill_price + atr_stop * atr) if is_short_signal else (fill_price - atr_stop * atr),
+                    stop_price=(
+                        ((fill_price + stop_dist) if is_short_signal else (fill_price - stop_dist))
+                        if m7_mode else
+                        ((fill_price + atr_stop * atr) if is_short_signal else (fill_price - atr_stop * atr))
+                    ),
                     trail_price=trail_px,
                     size=size,
                     cost=total_cost,
@@ -1857,7 +2608,7 @@ def run_portfolio_backtest(
     # ── JSON State Export (live dashboard için) ───────────────────────────
     if json_out:
         import json as _json
-        _mode = "M6" if m6_mode else ("M5" if m5_mode else ("M4" if m4_mode else "M1"))
+        _mode = "M7" if _is_m7 else ("M6" if m6_mode else ("M5" if m5_mode else ("M4" if m4_mode else "M1")))
         # PnL hesapla
         _total_pnl_pct = (balance - initial_capital) / initial_capital * 100
         # Max drawdown
@@ -2124,13 +2875,15 @@ def _print_report(
             mins = int((t.exit_time - t.entry_time).total_seconds() / 60)
             dur  = f"{mins//60}sa" if mins >= 60 else f"{mins}dk"
         icon  = "+" if t.pnl > 0 else "-"
-        reason_short = {"stop_loss":"SL","trailing_stop":"TS","strategy_exit":"SE","backtest_end":"BE"}.get(
+        reason_short = {"stop_loss":"SL","trailing_stop":"TS","strategy_exit":"SE","backtest_end":"BE",
+                        "take_profit":"TP","time_stop":"TX","max_hold":"MH","fast_exit":"FX"}.get(
             t.exit_reason, t.exit_reason[:2])
         print(f"  {i:>3}  {t.symbol:<11} {e_str:<12} {dur:>6}  "
               f"{t.entry_price:>10.4f} {t.exit_price:>10.4f}  "
               f"{icon}${abs(t.pnl):>6.2f}  {reason_short}")
 
-    print(f"\n  Kısaltmalar: SL=Stop Loss  TS=Trailing Stop  SE=Strateji Çıkışı  BE=Test Sonu")
+    print(f"\n  Kısaltmalar: SL=Stop Loss  TS=Trailing Stop  SE=Strateji Çıkışı  BE=Test Sonu"
+          f"  TP=Hızlı Kâr  TX=Time-Stop  MH=Max Hold")
     print(f"{'═'*60}\n")
 
 
@@ -2161,10 +2914,16 @@ def main() -> None:
                         help="M5 mod: M4 + ATR-percentile sizing + portfolio circuit breaker + ER gate + momentum decay exit")
     parser.add_argument("--m6", action="store_true",
                         help="M6 mod: M5 + agresif pyramiding + erken trailing zoom + büyük pozisyon (upside capture)")
+    parser.add_argument("--m7", action="store_true",
+                        help="M7 mod: M5 (15m) tabanlı + pyramiding + trailing-Sharpe coin seçim + HMA20 erken-giriş + λ=0.55 long-tilt (M5'i içerir, M5 dokunulmaz)")
     args = parser.parse_args()
 
+    # YENİ M7 = M5 (15m) tabanlı + iyileştirmeler → M7, M5'i İÇERİR (tüm M5 davranışını alır).
+    # run_portfolio_backtest içinde m7_mode bayrağı kapatılır (_is_m7 olarak saklanır);
+    # iyileştirmeler _is_m7 ile gate'lenir, böylece M5 dokunulmamış kalır.
+    m7_mode   = args.m7
     m6_mode   = args.m6
-    m5_mode   = args.m5 or m6_mode   # M6, M5'i içerir
+    m5_mode   = args.m5 or m6_mode or m7_mode   # M6 ve M7, M5'i içerir
     m4_mode   = args.m4 or m5_mode   # M5, M4'ü içerir
     if m4_mode:
         auto_mode = True
@@ -2204,6 +2963,7 @@ def main() -> None:
         m4_mode=m4_mode,
         m5_mode=m5_mode,
         m6_mode=m6_mode,
+        m7_mode=m7_mode,
     )
 
 
