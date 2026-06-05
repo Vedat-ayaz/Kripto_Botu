@@ -1,0 +1,281 @@
+exchange:
+  name: "binance"
+  testnet: false
+
+trading:
+  symbols:
+    # ── Büyük Cap ─────────────────────────────────────────────────
+    - "BTC/USDT"
+    - "ETH/USDT"       # profil: ADX20, RSI50, score0.60
+    - "SOL/USDT"
+    - "XRP/USDT"
+    # ── Layer 1 / Layer 2 ──────────────────────────────────────────
+    - "DOT/USDT"       # profil: ADX22, RSI50, score0.62
+    - "MATIC/USDT"
+    - "NEAR/USDT"      # YENİ ✅  profil: ADX22, RSI50, score0.62
+    - "OP/USDT"        # YENİ ✅  profil: trailing5.0x, score0.57
+    # ── DeFi / AI ─────────────────────────────────────────────────
+    - "INJ/USDT"       # profil: trailing4.5x
+    - "FET/USDT"       # profil: trailing4.5x
+    # ── Kesin çıkarılanlar ─────────────────────────────────────────
+    # ✅ Eklendi, ✅ Çalışıyor: BTC ETH SOL XRP DOT MATIC INJ FET OP NEAR
+    # ❌ BNB:   WR=23%, -10.43% → yapısal uyumsuzluk
+    # ❌ ATOM:  WR=52% ama PF=0.636 → sideways ağırlıklı (Cosmos enflasyon)
+    # ❌ ADA:   -16.38% (profille birlikte) → Cardano bull run çok kısa
+    # ❌ AVAX:  WR=30.9% → zayıf trend sinyali
+    # ❌ APT:   WR=36.8% → yetersiz trend tarihi
+    # ❌ LINK:  PF=0.839 → oracle token, farklı korelasyon
+    # ❌ LDO:   WR=30.6%, PF=0.637 → governance token yapısı uyumsuz
+    # ❌ NEAR, AVAX (önceki): profil ile iyileşti ama diğerleri hâlâ negatif
+    # ❌ NEAR: artık ✅ listeye alındı (profil ile +5.91%)
+    # ❌ ARB, SUI, RENDER, TAO, WLD → 2023 ortasında çıktı (yetersiz veri)
+  timeframe: "1h"
+
+strategy:
+  ema_fast: 50
+  ema_slow: 200
+  rsi_period: 14
+  rsi_lower: 45
+  rsi_upper: 70
+  atr_period: 14
+  adx_period: 14
+  adx_threshold: 15          # 18→15: trend başlangıcında biraz erken giriş
+  volume_sma_period: 20
+  volume_sma_multiplier: 0.4  # strateji varsayılan: 0.4 (0.3 denendi → XRP -1.94% oldu, geri alındı)
+  min_atr_ratio: 0.002
+
+risk:
+  risk_per_trade: 0.015      # 0.01→0.015: %50 daha büyük pozisyon — ana getiri artışı buradan
+  daily_max_loss: 0.04       # 0.03→0.04: daha az zorunlu duruş
+  atr_stop_multiplier: 2.0
+  trailing_stop_atr_multiplier: 3.8   # 3.0→3.8: kazananlara daha fazla nefes
+  max_open_positions: 8      # 6→8: daha fazla eş zamanlı pozisyon
+  min_order_size: 10.0
+  max_position_pct: 0.20
+
+# ── Pyramiding (Turtle/Clenow) — Stage 1 ───────────────────────────────────
+# Kazanan pozisyonlara kâr seviyelerinde ek lot ekler.
+# - thresholds_atr: ATR cinsinden kâr eşikleri (İLK girişe göre)
+# - size_pcts: initial_size'ın yüzdesi olarak eklenecek lot boyutu
+# - stop_atr_multiplier: Pyramid sonrası stop = add_price − mult × ATR
+#   (Turtle kuralı: pyramid'in winners'ı losers'a dönüştürmesini engeller)
+# Örnek: ilk lot 1.0 ise, +1.5×ATR'de 0.5 lot, +3.0×ATR'de 0.25 lot → toplam 1.75 lot
+# Her pyramid sonrası stop yukarı çekilir → büyük geri-çekilmelerde kayıp sınırlı kalır.
+pyramiding:
+  enabled: true                # Global default: AÇIK
+  thresholds_atr: [1.5, 3.0]   # Stabil coinlerde [1.5, 3.0] iyi çalışıyor
+  size_pcts: [0.5, 0.25]       # ilk lot büyüklüğüne göre %50 ve %25
+  max_adds: 2
+  stop_atr_multiplier: 2.0     # Turtle: pyramid sonrası stop=add_price−2×ATR
+
+  # ── Adaptif Pyramid Gate ──────────────────────────────────────────
+  # Coin/zaman bazında HARDCODED açık-kapalı kararı yerine, sistem her
+  # pyramid tetikleyicisinde o anki indikatörlere bakıp karar verir.
+  # Stabil trender (BTC, SOL, MATIC gibi) → gate genelde açık
+  # Volatil patlamacılar (XRP, INJ, FET) → gate genelde kapalı (kendiliğinden)
+  # Aynı coin zamanla karakterini değiştirirse sistem uyum sağlar.
+  gate:
+    min_regime_score: 0.50     # ADX+Hurst kombinasyonu (0=ranging, 1=trending)
+    max_vol_spike: 1.50        # Anlık vol/avg_vol — patlama varsa skip
+    max_atr_ratio: 0.020       # ★ KRİTİK FİLTRE: yapısal volatilite (BTC ~1.5%, SOL ~2%)
+                               # Sistem bazı INJ/OP trade'lerinde de uygun an buluyor
+    min_adx: 22.0              # Trend gücü minimum
+
+# ── Filters: Anti-whipsaw + Multi-Timeframe — Stage 4 ──────────────────────
+# Choppiness Index (Dreiss 1991): piyasa choppy iken trend-following ölür.
+# CI > 61.8 = sideways/range; FET/NEAR'ın küçük kazanç+büyük kayıp pattern'i bunlardan.
+# MTF (Elder Triple Screen): 1h sinyali, 4h trend ile aynı yönde olmalı.
+# BTC zayıf getirisinin sebebi 4h chop'ta 1h erken giriş — MTF onu çözer.
+filters:
+  choppiness_enabled: true
+  choppiness_threshold: 61.8       # Dreiss klasik Fibonacci eşiği
+  # MTF: bug düzeltildikten sonra test edildi (Stage 5) → getiri 236→196 düştü.
+  # 4h ADX>18 + slope>0 + close>EMA50 kombinasyonu çok katı, çoğu coine zarar.
+  # NEAR negatife düştü, BTC -11pp. Global kapalı, per-coin ihtiyaca göre açılabilir.
+  mtf_filter_enabled: false
+
+# ── Partial Exits (R-multiple kademeli realize) — Stage 2 ──────────────────
+# Kazanan pozisyonu kademeli olarak realize eder, "winner turn into loser" elimine olur.
+# - r_multiple_levels: kâr eşikleri (R = entry_price - initial_stop_price birim risk)
+# - exit_pcts: her seviyede mevcut size'ın hangi oranı kapanır
+# Örnek: +1.5R'de %30 kapansın, +3R'de %30 daha kapansın, kalan %40 trailing'le koşsun
+partial_exits:
+  enabled: false  # Test edildi: bu sistemde getiriyi azaltıyor (-20pp).
+                  # Trailing stop zaten kâr kilitliyor; PE compounding'i kesiyor.
+                  # Negatif coinler WR sorunu, PE çözmez. Stage 3'e geçildi.
+  r_multiple_levels: [3.0, 6.0]
+  exit_pcts: [0.25, 0.25]
+  max_exits: 2
+
+# ── Per-Coin Profiller ─────────────────────────────────────────────────────
+# Baseline (yukarıdaki strategy/risk bölümü) tüm coinlere uygulanır.
+# Burada yalnızca farklı davranması gereken parametreler override edilir.
+# Belirtilmeyen parametreler baseline değerini kullanır.
+symbol_profiles:
+  # ── BTC: Yavaş, stabil trender — adx_threshold ve trailing gevşet ──
+  # Sorun: +6.44% düşük getiri. EMA50 buffer chop'ta sürekli kırılıyor,
+  # ADX 20-30 baskın olduğu için entry filtresi sıkı.
+  "BTC/USDT":
+    adx_threshold: 12              # 15→12: BTC için ADX nadiren yüksek, gevşet
+    atr_stop_multiplier: 2.3       # 2.0→2.3: BTC chop'ta stop_loss'tan kaçın
+    trailing_stop_atr_multiplier: 5.5  # 3.8→5.5: BTC stabil, kazananları daha uzun tut
+
+  # ── ETH: Kurumsal, yavaş trend değişimleri, derin pullback'ler ─────
+  # Sorun: WR=31.8%, -0.34% → giriş kalitesi çok düşük
+  # Düzeltme: güçlü trend şartı + sıkı giriş skoru + geniş trailing
+  "ETH/USDT":
+    adx_threshold: 20              # Baseline 15→20: ETH için güçlü trend şart
+    rsi_lower: 50                  # Baseline 45→50: net bullish momentum gerekli
+    atr_stop_multiplier: 2.5       # Baseline 2.0→2.5: ETH derin pullback yapar
+    trailing_stop_atr_multiplier: 4.5  # Baseline 3.8→4.5: uzun ETH trendlerini yakala
+    entry_score_trend: 0.60        # Baseline 0.55→0.60: giriş barını yükselt
+    entry_score_ranging: 0.65      # Baseline 0.60→0.65: ranging'de çok seçici
+
+  # ── DOT: Parachain tokeni, düzensiz trend yapısı ────────────────────
+  # Sorun: WR=34.7%, PF=0.915 → net kayıp
+  # Düzeltme: çok sıkı filtre + geniş trailing (az ama büyük kazananlar)
+  "DOT/USDT":
+    adx_threshold: 22              # Baseline 15→22: sadece çok güçlü trendlerde gir
+    rsi_lower: 50                  # Net momentum şart
+    atr_stop_multiplier: 2.5       # DOT volatil → geniş stop
+    trailing_stop_atr_multiplier: 5.0   # DOT patlama yaptığında uzun koşar
+    entry_score_trend: 0.62        # Çok sıkı filtre
+    entry_score_ranging: 0.68
+
+  # ── FET: Yüksek volatiliteli AI tokeni ──────────────────────────────
+  # Durum: WR=51.9%, +27.81% — iyi, büyük hareketleri daha iyi yakala
+  # NOT: atr_stop_multiplier 2.5 denendi → 77 trade, WR düştü, -9% getiri → kaldırıldı
+  # Sadece trailing stop genişletildi: kazananlar daha uzun koşsun
+  "FET/USDT":
+    trailing_stop_atr_multiplier: 4.5  # Baseline 3.8→4.5: FET rallisi uzun sürebiliyor
+    # Ana sorun: FET ATR/price ~3-5%, global pyramid gate 0.020 reddediyor.
+    # Çözüm: FET için gate'i gevşet → pyramid tekrar aktif olsun (28% → 9% düşüş çözülür)
+    pyramid_gate_max_atr_ratio: 0.050  # FET tipik ATR/price oranını barındırır
+    # FET volatil → CI sürekli yüksek, choppiness filtresi çoğu trade'i kesiyor
+    # MTF de FET 4h trendlerinin sık değiştiği için fazla kısıtlıyor
+    choppiness_threshold: 75.0         # 61.8→75: FET için çok daha gevşek
+    mtf_filter_enabled: false          # FET'i MTF kısıtından muaf tut
+    entry_score_trend: 0.55            # baseline'a geri al (filtre yumuşatma kompenzasyonu)
+
+  # ── INJ: DeFi tokeni, WR düşük ama kazananlar büyük ─────────────────
+  # Durum: WR=39.7%, +23.47% — kazananları daha uzun tut
+  "INJ/USDT":
+    atr_stop_multiplier: 2.3       # Biraz genişletilmiş stop
+    trailing_stop_atr_multiplier: 4.5  # Büyük INJ hareketleri için alan aç
+
+  # ── YENİ COINLER: Per-Coin Profil ─────────────────────────────────────
+
+  # ── ATOM: SORUN = trailing çok dar (avg_win $37 ↔ avg_loss $60) ──────
+  # WR=48.3% yüksek ama kazananlar çok erken kesilmiş → MUCH wider trailing
+  # ATOM 2023-2024'te %200+ trendler yaptı, onları yakalamak için nefes gerek
+  "ATOM/USDT":
+    atr_stop_multiplier: 2.5       # Derin ATOM volatilitesine karşı geniş stop
+    trailing_stop_atr_multiplier: 6.0   # Büyük ATOM trendlerini tüm yol yakala
+    entry_score_trend: 0.58        # WR zaten iyi, giriş eşiğini biraz yükselt
+
+  # ── LINK: SORUN = trailing çok dar (ratio 0.94) ──────────────────────
+  # WR=46.3% makul ama kazananlar küçük → trailing genişlet + giriş kalitesi artır
+  "LINK/USDT":
+    adx_threshold: 20              # Biraz daha güçlü trend şartı
+    atr_stop_multiplier: 2.5       # LINK derin geri çekilmeler yapıyor
+    trailing_stop_atr_multiplier: 5.5   # LINK büyük rallileri için nefes
+    entry_score_trend: 0.58        # Giriş kalitesini yükselt
+
+  # ── OP: WR=44.7% iyi ama ratio biraz düşük → trailing genişlet ───────
+  "OP/USDT":
+    adx_threshold: 22              # baseline 15→22: OP'de zayıf trende girme
+    atr_stop_multiplier: 2.5       # OP yüksek volatilite
+    trailing_stop_atr_multiplier: 5.0   # OP trendleri uzun sürebiliyor
+    entry_score_trend: 0.62        # 0.57→0.62: WR 31% → daha sıkı filtre
+    risk_per_trade: 0.010          # WR düşük + volatil → riski kıs
+
+  # ── NEAR: SORUN = WR düşük (38%), ratio iyi (1.64) → sıkı filtre ─────
+  # MaxDD=18.57%! Risk per trade düşür, giriş eşiği yükselt
+  "NEAR/USDT":
+    adx_threshold: 22              # Sadece güçlü trendlerde gir
+    rsi_lower: 50                  # Net momentum şart
+    atr_stop_multiplier: 2.5       # NEAR çok volatil
+    trailing_stop_atr_multiplier: 4.5  # Ratio zaten iyi, trailing yeterli
+    entry_score_trend: 0.65        # 0.62→0.65: lokal tepelere yakın girişleri kıs
+    entry_score_ranging: 0.70
+    volume_sma_multiplier: 0.8     # baseline 0.4→0.8: gerçek hacim teyidi
+    risk_per_trade: 0.010          # MaxDD'yi kontrol et
+
+  # ── APT: SORUN = WR düşük (36.8%), ratio orta (1.28) → sıkı filtre ──
+  "APT/USDT":
+    adx_threshold: 22              # Güçlü trend şartı
+    rsi_lower: 50
+    atr_stop_multiplier: 2.5       # APT çok volatil, geniş stop
+    trailing_stop_atr_multiplier: 5.0   # Büyük APT hareketlerini yakala
+    entry_score_trend: 0.62
+    risk_per_trade: 0.010          # APT volatil, riski düşür
+
+  # ── AVAX: SORUN = WR çok düşük (34.8%) + ratio kötü (0.96) ──────────
+  # İkili sorun: hem giriş kalitesi hem de trailing → kapsamlı profil
+  "AVAX/USDT":
+    adx_threshold: 25              # Sadece çok güçlü AVAX trendleri
+    rsi_lower: 52                  # Güçlü bullish momentum şart
+    atr_stop_multiplier: 2.5
+    trailing_stop_atr_multiplier: 5.5   # AVAX büyük trendle koşarsa yakala
+    entry_score_trend: 0.65        # Çok sıkı filtre
+    entry_score_ranging: 0.70
+    risk_per_trade: 0.010          # Volatil coin, riski düşür
+
+  # ── ADA: SORUN = WR düşük (36.4%) + ratio zayıf (1.03) ──────────────
+  # ADA genellikle uzun sideways periyodlar + kısa trendler
+  "ADA/USDT":
+    adx_threshold: 23              # Gerçek ADA trendleri için yüksek bariyer
+    rsi_lower: 50
+    atr_stop_multiplier: 2.5
+    trailing_stop_atr_multiplier: 5.5   # Büyük ADA bull run'ı yakalamak için
+    entry_score_trend: 0.63
+    entry_score_ranging: 0.68
+    risk_per_trade: 0.010
+
+  # ── LDO: EN ZOR (WR=37.5%, ratio=0.85) → çok sıkı filtre ────────────
+  # LDO DeFi governance token, trend yapısı düzensiz
+  "LDO/USDT":
+    adx_threshold: 25
+    rsi_lower: 52
+    atr_stop_multiplier: 2.5
+    trailing_stop_atr_multiplier: 5.5
+    entry_score_trend: 0.67        # Çok yüksek giriş eşiği
+    entry_score_ranging: 0.72
+    risk_per_trade: 0.010
+
+backtest:
+  initial_capital: 10000.0
+  commission_rate: 0.001
+  slippage_rate: 0.0005
+  start_date: "2023-01-01"
+  end_date: "2024-01-01"
+
+paper:
+  initial_capital: 10000.0
+
+scalping:
+  timeframe: "5m"
+  initial_capital: 10000.0
+  profit_target_pct: 0.008
+  stop_loss_pct: 0.003
+  max_hold_bars: 8
+  max_open_positions: 5
+  risk_per_trade: 0.01
+  max_position_pct: 0.15
+  daily_max_loss: 0.05
+
+live:
+  enabled: false
+
+telegram:
+  enabled: false
+
+learning:
+  adaptation_window: 20
+  min_improvement: 0.10
+
+logging:
+  level: "INFO"
+  file: "logs/bot.log"
+  max_bytes: 10485760
+  backup_count: 5
