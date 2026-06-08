@@ -53,9 +53,8 @@ class RegimeParams:
 # ── Sabit: Rejim → Parametre tablosu ─────────────────────────────────────────
 
 _REGIME_TABLE: dict[Regime, RegimeParams] = {
-    # Orijinal değerler (27 Mayıs öncesi) — v18/v19/v21 kalibrasyon geri alındı.
-    # Sebep: NEUTRAL'da pozisyon boyutu 0.38'e, max_pos 4'e düşürülmüştü →
-    # piyasa büyük çoğunlukla NEUTRAL'da seyrederken bot çok az/küçük işlem açıyordu.
+    # 28 Mayıs v17 değerleri — yalnızca 2 Haziran 1564670 commit'indeki
+    # v18/v19/v21 değişikliği geri alındı (NEUTRAL 0.38→0.55, max_pos 4→6).
     Regime.STRONG_BEAR: RegimeParams(
         position_size_mult=0.25,
         entry_score_boost=+0.20,
@@ -71,10 +70,10 @@ _REGIME_TABLE: dict[Regime, RegimeParams] = {
         coin_tier=5,
     ),
     Regime.NEUTRAL: RegimeParams(
-        position_size_mult=0.80,   # orijinal: 0.55→0.38 geri alındı
-        entry_score_boost=+0.03,   # orijinal: daha gevşek giriş eşiği
+        position_size_mult=0.55,   # v17 (28 Mayıs): 2 Haziran'da 0.38'e düşürülmüştü, geri alındı
+        entry_score_boost=+0.08,   # v17 (28 Mayıs): 2 Haziran'da 0.10'a çıkarılmıştı, geri alındı
         trailing_mult_boost=+0.0,
-        max_positions=8,           # orijinal: 6→4 geri alındı
+        max_positions=6,           # v17 (28 Mayıs): 2 Haziran'da 4'e düşürülmüştü, geri alındı
         coin_tier=5,
     ),
     Regime.BULL: RegimeParams(
