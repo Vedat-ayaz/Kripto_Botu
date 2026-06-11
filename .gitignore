@@ -41,3 +41,11 @@ Thumbs.db
 htmlcov/
 bist/*.txt
 bist/*.log
+
+# ── M9 / tahsisçi yan ürünleri ────────────────────────────────
+M9/.cache/
+M9/sonuclar/
+M9/__pycache__/
+.ohlcv_cache/
+aws_pull/
+graphify-out/

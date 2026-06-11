@@ -72,6 +72,7 @@ M5_STATE_PATH = STATE_DIR / "m5_state.json"
 M6_STATE_PATH = STATE_DIR / "m6_state.json"
 M7_STATE_PATH = STATE_DIR / "m7_state.json"
 M8_STATE_PATH = STATE_DIR / "m8_state.json"
+ORTAK_STATE_PATH = STATE_DIR / "ortak_state.json"
 LOCAL_TZ = datetime.now().astimezone().tzinfo or timezone.utc
 DB = BotStateDB()
 
@@ -1004,7 +1005,37 @@ def build_model_summary(name: str, state: dict[str, Any] | None) -> dict[str, An
 
     risk_efficiency = return_pct / max(drawdown_pct, 1.0) if drawdown_pct else return_pct
 
+    # ── Sharpe / Omega / reel getiri (günlük equity geçmişinden) ─────────────
+    # equity_history: [["YYYY-MM-DD", equity], ...] — live_runner her tick'te yazar.
+    # Reel getiri: dolar enflasyonu varsayımı %3/yıl (sabit, gösterge amaçlı).
+    INFLATION_ANNUAL = 0.03
+    sharpe = None
+    omega = None
+    real_return_pct = None
+    elapsed_days = None
+    eq_hist = state.get("equity_history") or []
+    try:
+        if len(eq_hist) >= 5:
+            _s = pd.Series({pd.Timestamp(d): float(v) for d, v in eq_hist}).sort_index()
+            _rets = _s.pct_change().dropna()
+            if len(_rets) >= 4 and float(_rets.std()) > 0:
+                sharpe = float(_rets.mean() / _rets.std()) * math.sqrt(365)
+                _gains = float(_rets[_rets > 0].sum())
+                _losses = abs(float(_rets[_rets < 0].sum()))
+                omega = (_gains / _losses) if _losses > 0 else float("inf")
+        _created = parse_timestamp(state.get("created_at"))
+        if _created is not None:
+            elapsed_days = max((datetime.now(timezone.utc) - _created).days, 1)
+            _infl = (1 + INFLATION_ANNUAL) ** (elapsed_days / 365) - 1
+            real_return_pct = ((1 + equity_return / 100) / (1 + _infl) - 1) * 100
+    except Exception:
+        pass
+
     return {
+        "sharpe": sharpe,
+        "omega": omega,
+        "real_return_pct": real_return_pct,
+        "elapsed_days": elapsed_days,
         "name": name,
         "available": True,
         "state": state,
@@ -2045,6 +2076,11 @@ def render_model_summary_card(model: dict[str, Any], accent: str, subtitle: str)
           <div class="panel-copy" style="margin-top:0.4rem; font-size:0.82rem; color:#6b7280;">
             💰 Serbest nakit: {format_money(free_cash)} &nbsp;|&nbsp; {pos_line}{upnl_txt}
           </div>
+          <div class="panel-copy" style="margin-top:0.35rem; font-size:0.82rem; color:#6b7280;">
+            📐 Sharpe: {_fmt_ratio(model.get("sharpe"))} ·
+            Omega: {_fmt_ratio(model.get("omega"))} ·
+            Reel getiri (enf. %3/yıl): {_fmt_real(model.get("real_return_pct"))}
+          </div>
           <div class="badge-row" style="margin-top:0.8rem">
             <span class="badge badge-neutral">{model["trade_count"]} islem</span>
             <span class="badge badge-neutral">{len(open_pos)} acik pozisyon</span>
@@ -2054,6 +2090,21 @@ def render_model_summary_card(model: dict[str, Any], accent: str, subtitle: str)
         """,
         unsafe_allow_html=True,
     )
+
+
+def _fmt_ratio(v) -> str:
+    """Sharpe/Omega gösterimi — yeterli günlük veri yoksa '—' (≥5 gün gerekir)."""
+    if v is None:
+        return "—"
+    if v == float("inf"):
+        return "∞"
+    return f"{v:.2f}"
+
+
+def _fmt_real(v) -> str:
+    if v is None:
+        return "—"
+    return f"{v:+.2f}%"
 
 
 def render_state_trade_table(model: dict[str, Any], limit: int = 12) -> None:
@@ -2234,12 +2285,12 @@ def render_model_symbol_comparison(m4: dict[str, Any], m5: dict[str, Any]) -> No
     st.plotly_chart(fig, use_container_width=True)
 
 
-def render_models_tab(m4: dict[str, Any], m5: dict[str, Any], m6: dict[str, Any], m7: dict[str, Any], m8: dict[str, Any]) -> None:
+def render_models_tab(m4: dict[str, Any], m5: dict[str, Any], m6: dict[str, Any], m7: dict[str, Any], m8: dict[str, Any], ortak: dict[str, Any] | None = None) -> None:
     render_section_header(
-        "M4 / M5 / M6 / M7 / M8 Derin Karsilastirma",
+        "M4 / M5 / M6 / M7 / M8 / ORTAK Derin Karsilastirma",
         "Ayni donemde hangi model daha temiz, daha guclu ve daha verimli calismis gorebil.",
     )
-    card_m4, card_m5, card_m6, card_m7, card_m8 = st.columns(5)
+    card_m4, card_m5, card_m6, card_m7, card_m8, card_ortak = st.columns(6)
     with card_m4:
         render_model_summary_card(m4, PALETTE["primary"], "Stabil referans")
     with card_m5:
@@ -2250,6 +2301,17 @@ def render_models_tab(m4: dict[str, Any], m5: dict[str, Any], m6: dict[str, Any]
         render_model_summary_card(m7, "#e879f9", "Seçici trend (M7)")
     with card_m8:
         render_model_summary_card(m8, "#f97316", "Hacim odaklı (M8)")
+    with card_ortak:
+        if ortak is not None:
+            render_model_summary_card(ortak, "#facc15", "Tahsisçi (M9-sleeve)")
+            _ost = (ortak.get("state") or {})
+            _alloc = _ost.get("allocated")
+            _oi = (_ost.get("oi_log") or [])
+            _oi_txt = f"{float(_oi[-1][1]):,.0f} BTC" if _oi else "—"
+            st.caption(
+                f"Tahsis: {'🟢 AÇIK (M9 aynalanıyor)' if _alloc else '💤 nakitte'} · "
+                f"Shadow M9: {_ost.get('shadow_return_pct', '—')}% · BTC OI: {_oi_txt}"
+            )
 
     render_section_header(
         "Sembol Bazli Model Farki",
@@ -2864,6 +2926,7 @@ def main() -> None:
         m6 = build_model_summary("M6", load_model_state(str(M6_STATE_PATH)))
         m7 = build_model_summary("M7", load_model_state(str(M7_STATE_PATH)))
         m8 = build_model_summary("M8", load_model_state(str(M8_STATE_PATH)))
+        ortak = build_model_summary("ORTAK", load_model_state(str(ORTAK_STATE_PATH)))
         exchange_name = ((config.get("exchange") or {}).get("name") or "binance").lower()
         watchlist = build_watchlist(config, [m4, m5, m6, m7, m8])
         market_rows = fetch_market_snapshot(tuple(watchlist), exchange_name) if watchlist else []
@@ -2903,7 +2966,7 @@ def main() -> None:
                 watchlist=watchlist,
             )
         with tabs[2]:
-            render_models_tab(m4, m5, m6, m7, m8)
+            render_models_tab(m4, m5, m6, m7, m8, ortak)
         with tabs[3]:
             render_coin_benchmark_tab(m4, m5, m6, m7, m8)
         with tabs[4]:

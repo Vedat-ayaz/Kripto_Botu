@@ -53,8 +53,8 @@ class RegimeParams:
 # ── Sabit: Rejim → Parametre tablosu ─────────────────────────────────────────
 
 _REGIME_TABLE: dict[Regime, RegimeParams] = {
-    # 28 Mayıs v17 değerleri — yalnızca 2 Haziran 1564670 commit'indeki
-    # v18/v19/v21 değişikliği geri alındı (NEUTRAL 0.38→0.55, max_pos 4→6).
+    # v18 (2 Haziran) değerleri — canlı AWS ile eşleşiyor, 13 günlük live test
+    # daha iyi sonuç verdi (+2.94% live vs +0.79% backtest v17 ile).
     Regime.STRONG_BEAR: RegimeParams(
         position_size_mult=0.25,
         entry_score_boost=+0.20,
@@ -70,10 +70,10 @@ _REGIME_TABLE: dict[Regime, RegimeParams] = {
         coin_tier=5,
     ),
     Regime.NEUTRAL: RegimeParams(
-        position_size_mult=0.55,   # v17 (28 Mayıs): 2 Haziran'da 0.38'e düşürülmüştü, geri alındı
-        entry_score_boost=+0.08,   # v17 (28 Mayıs): 2 Haziran'da 0.10'a çıkarılmıştı, geri alındı
+        position_size_mult=0.38,   # v18 (2 Haziran): canlı ile eşleşiyor
+        entry_score_boost=+0.10,   # v18 (2 Haziran): canlı ile eşleşiyor
         trailing_mult_boost=+0.0,
-        max_positions=6,           # v17 (28 Mayıs): 2 Haziran'da 4'e düşürülmüştü, geri alındı
+        max_positions=4,           # v18 (2 Haziran): canlı ile eşleşiyor
         coin_tier=5,
     ),
     Regime.BULL: RegimeParams(

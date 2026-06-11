@@ -49,6 +49,7 @@ M5_STATE     = str(STATE_DIR / "m5_state.json")
 M6_STATE     = str(STATE_DIR / "m6_state.json")
 M7_STATE     = str(STATE_DIR / "m7_state.json")
 M8_STATE     = str(STATE_DIR / "m8_state.json")
+ORTAK_STATE  = str(STATE_DIR / "ortak_state.json")
 CONFIG_FILE  = STATE_DIR / "config.json"
 DB_PATH      = str(_ROOT / "dashboard" / "bot_state.db")
 SNAPSHOT_DIR = _ROOT / "logs" / "snapshots"
@@ -82,7 +83,7 @@ def _save_config(cfg: dict) -> None:
 def _fresh_start(capital: float, coins: int) -> None:
     """Tüm state'i sil ve sıfırdan başla."""
     print("\n🔄 SIFIRDAN BAŞLATILIYOR...")
-    for f in [M4_STATE, M5_STATE, M6_STATE, M7_STATE, M8_STATE]:
+    for f in [M4_STATE, M5_STATE, M6_STATE, M7_STATE, M8_STATE, ORTAK_STATE]:
         if Path(f).exists():
             Path(f).unlink()
             print(f"  🗑  Silindi: {f}")
@@ -198,6 +199,38 @@ def _save_snapshots() -> None:
 
 # ── Ana Tick ─────────────────────────────────────────────────────────────────
 
+def _append_equity_history(state_files: list[str]) -> None:
+    """Her modelin state'ine günlük equity noktası ekler (Sharpe/Omega hesabı için).
+    Equity = serbest nakit + açık pozisyon unrealized PnL toplamı."""
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    for sf in state_files:
+        p = Path(sf)
+        if not p.exists():
+            continue
+        try:
+            with open(p) as f:
+                st = json.load(f)
+            # dashboard compute_open_position_value ile aynı formül:
+            # equity = serbest nakit + Σ(LONG: cost+upnl | SHORT: marj+upnl)
+            equity = float(st.get("balance", st.get("final_balance", 0.0)))
+            for pos in st.get("open_positions", []):
+                upnl = float(pos.get("unrealized_pnl", 0.0) or 0.0)
+                if pos.get("is_short"):
+                    locked = float(pos.get("margin_locked", 0.0) or 0.0)
+                    if locked < 0.01:
+                        locked = float(pos.get("cost", 0.0) or 0.0)
+                    equity += locked + upnl
+                else:
+                    equity += float(pos.get("cost", 0.0) or 0.0) + upnl
+            hist = [e for e in st.get("equity_history", []) if e[0] != today]
+            hist.append([today, round(equity, 2)])
+            st["equity_history"] = hist[-400:]
+            with open(p, "w") as f:
+                json.dump(st, f, indent=2, default=str)
+        except Exception:
+            logger.exception(f"equity history yazılamadı: {sf}")
+
+
 def run_once(cfg: dict) -> None:
     """Tüm modeller için bir tick çalıştırır."""
     capital = cfg.get("capital", DEFAULT_CAPITAL)
@@ -293,6 +326,22 @@ def run_once(cfg: dict) -> None:
     except Exception as e:
         print(f"  ❌ M8 hata: {e}")
         logger.exception("M8 tick hata")
+
+    # ── ORTAK (M9-sleeve shadow + T2 tahsisçi + defter aynalama + OI gözlemci) ─
+    print(f"\n🟡 ORTAK tick (tahsisçi — shadow M9 + T2)...")
+    try:
+        from ortak_engine import OrtakEngine
+        engine_ortak = OrtakEngine(capital=capital, state_file=ORTAK_STATE)
+        engine_ortak.tick()
+    except Exception as e:
+        print(f"  ❌ ORTAK hata: {e}")
+        logger.exception("ORTAK tick hata")
+
+    # ── Günlük equity geçmişi (Sharpe/Omega için — tüm modeller) ──────────────
+    try:
+        _append_equity_history([M4_STATE, M5_STATE, M6_STATE, M7_STATE, M8_STATE])
+    except Exception as e:
+        logger.exception("equity history hata")
 
     # ── Dashboard güncelle ────────────────────────────────────────────────────
     print("\n📊 Dashboard güncelleniyor...")
