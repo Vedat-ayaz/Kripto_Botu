@@ -1233,6 +1233,7 @@ def render_top_metrics(
     m6: dict[str, Any],
     m7: dict[str, Any],
     m8: dict[str, Any],
+    ortak: dict[str, Any] | None = None,
 ) -> None:
     open_positions = snapshot.get("open_positions") or []
     closed = snapshot.get("closed") or []
@@ -1252,35 +1253,49 @@ def render_top_metrics(
     m6_return = safe_float(m6.get("equity_return"), safe_float(m6.get("return_pct")))
     m7_return = safe_float(m7.get("equity_return"), safe_float(m7.get("return_pct")))
     m8_return = safe_float(m8.get("equity_return"), safe_float(m8.get("return_pct")))
-    total_balance = m4_balance + m5_balance + m6_balance + m7_balance + m8_balance
+    ortak = ortak or {}
+    ortak_balance = _model_equity(ortak) if ortak.get("available") else 0.0
+    ortak_return = safe_float(ortak.get("equity_return"), safe_float(ortak.get("return_pct")))
+    total_balance = m4_balance + m5_balance + m6_balance + m7_balance + m8_balance + ortak_balance
     total_initial = (
         safe_float(m4.get("initial_capital"), 1000.0)
         + safe_float(m5.get("initial_capital"), 1000.0)
         + safe_float(m6.get("initial_capital"), 1000.0)
         + safe_float(m7.get("initial_capital"), 1000.0)
         + safe_float(m8.get("initial_capital"), 1000.0)
+        + (safe_float(ortak.get("initial_capital"), 1000.0) if ortak.get("available") else 0.0)
     )
     total_pnl = total_balance - total_initial
 
-    # 5 model arasından en yüksek equity (toplam sermaye) olanı seç
+    # Modeller arasından en yüksek equity (toplam sermaye) olanı seç
     _candidates = [("M4", m4), ("M5", m5), ("M6", m6), ("M7", m7), ("M8", m8)]
+    if ortak.get("available"):
+        _candidates.append(("ORTAK", ortak))
     best_name, best_dict = max(_candidates, key=lambda x: _model_equity(x[1]))
     best_model = best_name
     best_model_return = safe_float(best_dict.get("equity_return"), safe_float(best_dict.get("return_pct")))
 
-    cols = st.columns(8)
-    # Üst satırda 8 metrik → bakiyeler TAM DOLAR (kuruşsuz) gösterilir ki dar sütuna sığsın.
+    cols = st.columns(9)
+    # Üst satırda 9 metrik → bakiyeler TAM DOLAR (kuruşsuz) gösterilir ki dar sütuna sığsın.
     cols[0].metric("M4 Bakiye", format_money(m4_balance, 0), format_pct(m4_return), delta_color=style_metric_delta(m4_return))
     cols[1].metric("M5 Bakiye", format_money(m5_balance, 0), format_pct(m5_return), delta_color=style_metric_delta(m5_return))
     cols[2].metric("M6 Bakiye", format_money(m6_balance, 0), format_pct(m6_return), delta_color=style_metric_delta(m6_return))
     cols[3].metric("M7 Bakiye", format_money(m7_balance, 0), format_pct(m7_return), delta_color=style_metric_delta(m7_return))
     cols[4].metric("M8 Bakiye", format_money(m8_balance, 0), format_pct(m8_return), delta_color=style_metric_delta(m8_return))
-    cols[5].metric("Acik Pozisyon", str(len(open_positions)), f"{trade_count} kapali islem")
+    if ortak.get("available"):
+        _o_st = ortak.get("state") or {}
+        _o_sub = "🟢 M9 aynalı" if _o_st.get("allocated") else "💤 nakitte"
+        cols[5].metric("ORTAK Bakiye", format_money(ortak_balance, 0),
+                       f"{format_pct(ortak_return)} · {_o_sub}",
+                       delta_color=style_metric_delta(ortak_return))
+    else:
+        cols[5].metric("ORTAK Bakiye", "—", "state bekleniyor")
+    cols[6].metric("Acik Pozisyon", str(len(open_positions)), f"{trade_count} kapali islem")
     # Piyasa Nefesi: yükselen ▲ yeşil, düşen ▼ kırmızı ayrı renk — st.metric tek renk
     # desteklediğinden custom HTML kart kullanılır (metric kutusu stiliyle uyumlu).
     _avg = breadth["avg_change"]
     _avg_color = "#12b886" if _avg >= 0 else "#ff5a5f"
-    cols[6].markdown(
+    cols[7].markdown(
         f"""
         <div data-testid="stMetric" style="
             background:linear-gradient(180deg,#ffffff 0%,#f8fbff 100%);
@@ -1299,7 +1314,7 @@ def render_top_metrics(
         """,
         unsafe_allow_html=True,
     )
-    cols[7].metric("Toplam Sermaye", format_money(total_balance, 0), format_money(total_pnl), delta_color=style_metric_delta(total_pnl))
+    cols[8].metric("Toplam Sermaye", format_money(total_balance, 0), format_money(total_pnl), delta_color=style_metric_delta(total_pnl))
 
 
 def render_section_header(title: str, copy: str, right: str = "") -> None:
@@ -2934,7 +2949,7 @@ def main() -> None:
         signal_df = prepare_signal_df(snapshot.get("signals") or [])
         signal_map = build_signal_map(signal_df)
 
-        render_top_metrics(snapshot=snapshot, breadth=breadth, m4=m4, m5=m5, m6=m6, m7=m7, m8=m8)
+        render_top_metrics(snapshot=snapshot, breadth=breadth, m4=m4, m5=m5, m6=m6, m7=m7, m8=m8, ortak=ortak)
 
         tabs = st.tabs(
             [
