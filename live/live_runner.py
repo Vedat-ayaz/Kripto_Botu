@@ -274,40 +274,27 @@ def run_once(cfg: dict) -> None:
         print(f"  ❌ M5 hata: {e}")
         logger.exception("M5 tick hata")
 
-    # ── M6 (5m, 9 coin hızlı swing) ──────────────────────────────────────────
-    print("\n🟢 M6 tick (5m, SYMBOLS)...")
+    # ── M6 (YENİ) = M5 KLONU — değişiklik sandbox'ı ──────────────────────────
+    #    Eski M6 (hızlı-swing scalper) ve M7 EMEKLİYE AYRILDI (14 Haz 2026, kullanıcı
+    #    kararı: canlıda istenen gibi çalışmadılar). Eski state'ler _archive/'a taşındı.
+    #    YENİ M6 = M5 ile BİREBİR (m5_mode), ayrı state → M5 dokunulmadan M6 üzerinde
+    #    iyileştirme denenir. Backtest ablasyonu (14 Haz): re-entry/scale-out backtest'te
+    #    ölü, swing-stop marjinal/trend-eğimli → şimdilik SAF KLON, yamalar sonra.
+    print(f"\n🟢 M6 tick (M5 KLONU — 15m, UNIVERSE)...")
     try:
         engine_m6 = LiveEngine(
             mode="M6",
-            symbols=SYMBOLS,
-            timeframe="5m",
+            symbols=UNIVERSE,
+            timeframe="15m",
             capital=capital,
             state_file=M6_STATE,
-            m6_mode=True,
+            use_universe=True,
+            m5_mode=True,      # M5 KLONU — birebir M5 davranışı, ayrı state
         )
         engine_m6.tick()
     except Exception as e:
         print(f"  ❌ M6 hata: {e}")
         logger.exception("M6 tick hata")
-
-    # ── M7 (15m, tüm UNIVERSE) — M5-klon + seçici trend iyileştirmeleri ───────
-    # (Sharpe-gate, #10 karşı-trend, Chandelier trail, breakeven, λ-tilt, HMA-erken)
-    # NOT: M5 DOKUNULMADI — M7 ayrı motor/ayrı state, M4/M5/M6 aynen devam eder.
-    print(f"\n🟪 M7 tick (15m, UNIVERSE — {len(UNIVERSE)} coin)...")
-    try:
-        engine_m7 = LiveEngine(
-            mode="M7",
-            symbols=UNIVERSE,
-            timeframe="15m",
-            capital=capital,
-            state_file=M7_STATE,
-            use_universe=True,
-            m7_mode=True,
-        )
-        engine_m7.tick()
-    except Exception as e:
-        print(f"  ❌ M7 hata: {e}")
-        logger.exception("M7 tick hata")
 
     # ── M8 (15m, tüm UNIVERSE) — M7-klon + hacim iyileştirmeleri ─────────────
     # NOT: M7 DONUKTUR — M8 ayrı motor/state, M7 dokunulmaz.
@@ -337,9 +324,9 @@ def run_once(cfg: dict) -> None:
         print(f"  ❌ ORTAK hata: {e}")
         logger.exception("ORTAK tick hata")
 
-    # ── Günlük equity geçmişi (Sharpe/Omega için — tüm modeller) ──────────────
+    # ── Günlük equity geçmişi (Sharpe/Omega için — aktif modeller) ────────────
     try:
-        _append_equity_history([M4_STATE, M5_STATE, M6_STATE, M7_STATE, M8_STATE])
+        _append_equity_history([M4_STATE, M5_STATE, M6_STATE, M8_STATE])
     except Exception as e:
         logger.exception("equity history hata")
 

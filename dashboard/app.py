@@ -1256,46 +1256,46 @@ def render_top_metrics(
     ortak = ortak or {}
     ortak_balance = _model_equity(ortak) if ortak.get("available") else 0.0
     ortak_return = safe_float(ortak.get("equity_return"), safe_float(ortak.get("return_pct")))
-    total_balance = m4_balance + m5_balance + m6_balance + m7_balance + m8_balance + ortak_balance
+    # M7 emekli → toplamlara dahil değil
+    total_balance = m4_balance + m5_balance + m6_balance + m8_balance + ortak_balance
     total_initial = (
         safe_float(m4.get("initial_capital"), 1000.0)
         + safe_float(m5.get("initial_capital"), 1000.0)
-        + safe_float(m6.get("initial_capital"), 1000.0)
-        + safe_float(m7.get("initial_capital"), 1000.0)
+        + (safe_float(m6.get("initial_capital"), 1000.0) if m6.get("available") else 0.0)
         + safe_float(m8.get("initial_capital"), 1000.0)
         + (safe_float(ortak.get("initial_capital"), 1000.0) if ortak.get("available") else 0.0)
     )
     total_pnl = total_balance - total_initial
 
     # Modeller arasından en yüksek equity (toplam sermaye) olanı seç
-    _candidates = [("M4", m4), ("M5", m5), ("M6", m6), ("M7", m7), ("M8", m8)]
+    _candidates = [("M4", m4), ("M5", m5), ("M6", m6), ("M8", m8)]
     if ortak.get("available"):
         _candidates.append(("ORTAK", ortak))
     best_name, best_dict = max(_candidates, key=lambda x: _model_equity(x[1]))
     best_model = best_name
     best_model_return = safe_float(best_dict.get("equity_return"), safe_float(best_dict.get("return_pct")))
 
-    cols = st.columns(9)
-    # Üst satırda 9 metrik → bakiyeler TAM DOLAR (kuruşsuz) gösterilir ki dar sütuna sığsın.
+    # M6 = M5 klonu (sandbox), M7 emekliye ayrıldı (14 Haz 2026)
+    cols = st.columns(8)
+    # Üst satırda 8 metrik → bakiyeler TAM DOLAR (kuruşsuz) gösterilir ki dar sütuna sığsın.
     cols[0].metric("M4 Bakiye", format_money(m4_balance, 0), format_pct(m4_return), delta_color=style_metric_delta(m4_return))
     cols[1].metric("M5 Bakiye", format_money(m5_balance, 0), format_pct(m5_return), delta_color=style_metric_delta(m5_return))
-    cols[2].metric("M6 Bakiye", format_money(m6_balance, 0), format_pct(m6_return), delta_color=style_metric_delta(m6_return))
-    cols[3].metric("M7 Bakiye", format_money(m7_balance, 0), format_pct(m7_return), delta_color=style_metric_delta(m7_return))
-    cols[4].metric("M8 Bakiye", format_money(m8_balance, 0), format_pct(m8_return), delta_color=style_metric_delta(m8_return))
+    cols[2].metric("M6 Bakiye", format_money(m6_balance, 0), f"{format_pct(m6_return)} · M5 klonu", delta_color=style_metric_delta(m6_return))
+    cols[3].metric("M8 Bakiye", format_money(m8_balance, 0), format_pct(m8_return), delta_color=style_metric_delta(m8_return))
     if ortak.get("available"):
         _o_st = ortak.get("state") or {}
         _o_sub = "🟢 M9 aynalı" if _o_st.get("allocated") else "💤 nakitte"
-        cols[5].metric("ORTAK Bakiye", format_money(ortak_balance, 0),
+        cols[4].metric("ORTAK Bakiye", format_money(ortak_balance, 0),
                        f"{format_pct(ortak_return)} · {_o_sub}",
                        delta_color=style_metric_delta(ortak_return))
     else:
-        cols[5].metric("ORTAK Bakiye", "—", "state bekleniyor")
-    cols[6].metric("Acik Pozisyon", str(len(open_positions)), f"{trade_count} kapali islem")
+        cols[4].metric("ORTAK Bakiye", "—", "state bekleniyor")
+    cols[5].metric("Acik Pozisyon", str(len(open_positions)), f"{trade_count} kapali islem")
     # Piyasa Nefesi: yükselen ▲ yeşil, düşen ▼ kırmızı ayrı renk — st.metric tek renk
     # desteklediğinden custom HTML kart kullanılır (metric kutusu stiliyle uyumlu).
     _avg = breadth["avg_change"]
     _avg_color = "#12b886" if _avg >= 0 else "#ff5a5f"
-    cols[7].markdown(
+    cols[6].markdown(
         f"""
         <div data-testid="stMetric" style="
             background:linear-gradient(180deg,#ffffff 0%,#f8fbff 100%);
@@ -1314,7 +1314,7 @@ def render_top_metrics(
         """,
         unsafe_allow_html=True,
     )
-    cols[8].metric("Toplam Sermaye", format_money(total_balance, 0), format_money(total_pnl), delta_color=style_metric_delta(total_pnl))
+    cols[7].metric("Toplam Sermaye", format_money(total_balance, 0), format_money(total_pnl), delta_color=style_metric_delta(total_pnl))
 
 
 def render_section_header(title: str, copy: str, right: str = "") -> None:
@@ -2302,18 +2302,16 @@ def render_model_symbol_comparison(m4: dict[str, Any], m5: dict[str, Any]) -> No
 
 def render_models_tab(m4: dict[str, Any], m5: dict[str, Any], m6: dict[str, Any], m7: dict[str, Any], m8: dict[str, Any], ortak: dict[str, Any] | None = None) -> None:
     render_section_header(
-        "M4 / M5 / M6 / M7 / M8 / ORTAK Derin Karsilastirma",
+        "M4 / M5 / M6 / M8 / ORTAK Derin Karsilastirma",
         "Ayni donemde hangi model daha temiz, daha guclu ve daha verimli calismis gorebil.",
     )
-    card_m4, card_m5, card_m6, card_m7, card_m8, card_ortak = st.columns(6)
+    card_m4, card_m5, card_m6, card_m8, card_ortak = st.columns(5)
     with card_m4:
         render_model_summary_card(m4, PALETTE["primary"], "Stabil referans")
     with card_m5:
-        render_model_summary_card(m5, PALETTE["success"], "Risk dengeli")
+        render_model_summary_card(m5, PALETTE["success"], "Risk dengeli (donuk)")
     with card_m6:
-        render_model_summary_card(m6, PALETTE["warning"], "Agresif M6")
-    with card_m7:
-        render_model_summary_card(m7, "#e879f9", "Seçici trend (M7)")
+        render_model_summary_card(m6, PALETTE["warning"], "M5 klonu (sandbox)")
     with card_m8:
         render_model_summary_card(m8, "#f97316", "Hacim odaklı (M8)")
     with card_ortak:
@@ -2334,7 +2332,7 @@ def render_models_tab(m4: dict[str, Any], m5: dict[str, Any], m6: dict[str, Any]
     )
     render_model_symbol_comparison(m4, m5)
 
-    trade_m4, trade_m5, trade_m6, trade_m7, trade_m8 = st.columns(5)
+    trade_m4, trade_m5, trade_m6, trade_m8 = st.columns(4)
     with trade_m4:
         st.markdown("##### M4 Acik Pozisyonlar")
         render_state_open_positions(m4.get("state"))
@@ -2350,11 +2348,6 @@ def render_models_tab(m4: dict[str, Any], m5: dict[str, Any], m6: dict[str, Any]
         render_state_open_positions(m6.get("state"))
         st.markdown("##### M6 Son Islemler")
         render_state_trade_table(m6)
-    with trade_m7:
-        st.markdown("##### M7 Acik Pozisyonlar")
-        render_state_open_positions(m7.get("state"))
-        st.markdown("##### M7 Son Islemler")
-        render_state_trade_table(m7)
     with trade_m8:
         st.markdown("##### M8 Acik Pozisyonlar")
         render_state_open_positions(m8.get("state"))
@@ -2373,8 +2366,6 @@ def render_models_tab(m4: dict[str, Any], m5: dict[str, Any], m6: dict[str, Any]
     render_state_detailed_trade_table(m5)
     st.markdown("##### M6 — Detayli Islem Gecmisi")
     render_state_detailed_trade_table(m6)
-    st.markdown("##### M7 — Detayli Islem Gecmisi")
-    render_state_detailed_trade_table(m7)
     st.markdown("##### M8 — Detayli Islem Gecmisi")
     render_state_detailed_trade_table(m8)
 

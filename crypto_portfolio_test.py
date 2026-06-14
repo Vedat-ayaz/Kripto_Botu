@@ -465,6 +465,29 @@ M8_VWAP_PERIOD   = int(os.environ.get("M8_VWAP_PERIOD", "96"))           # 96 ba
 M8_BULL_MAX_POS  = int(os.environ.get("M8_BULL_MAX_POS", "0"))           # 0=KAPALI: boğa rejim dedektörü gecikmeli → rally başında ateşlenmiyor, 6ay'ı bozuyor
 M8_BULL_SHARPE   = float(os.environ.get("M8_BULL_SHARPE", "999"))        # 999=KAPALI: aynı sebep
 
+# ── M6 (yeni) = M5 KLONU + 3 yapısal yama ────────────────────────────────────
+# Canlı M5 işlem teşhisi (14 Haz 2026): kayıp girişte değil ÇIKIŞTA — iki sızıntı:
+#   (a) whipsaw: stop yenince hareket bizsiz oluyor (JUP/TON/DOGE, stop sonrası >%10 geri döndü)
+#   (b) trail çok sıkı: trendleri erken bırakıyoruz (çıkış sonrası 61.5 puan devam kaçtı)
+# Üç yama, her biri bağımsız bayrak. M5 kod yolu DOKUNULMADI (bayraklar kapalı = M5).
+# M6 backtest = `--m5` + bu env bayrakları açık.
+#
+# YAMA 1 — RE-ENTRY: stop_loss'tan sonra sinyal hâlâ geçerliyse SL-cooldown'u baypas et,
+#          N bar içinde aynı yönde yeniden gir (whipsaw kaybını telafi).
+M6_REENTRY       = bool(int(os.environ.get("M6_REENTRY", "0")))
+M6_REENTRY_BARS  = int(os.environ.get("M6_REENTRY_BARS", "12"))   # stop sonrası kaç bar re-entry penceresi (15m: 3 saat)
+M6_REENTRY_MAX   = int(os.environ.get("M6_REENTRY_MAX", "2"))     # aynı coine ardışık max re-entry (sonsuz whipsaw'ı engelle)
+# YAMA 2 — SCALE-OUT + RUNNER: trail tetiğinde pozisyonun bir kısmını al, kalanı daha geniş
+#          trail ile koştur (trend devam ederse 61.5 puanın bir kısmını yakala).
+M6_SCALEOUT      = bool(int(os.environ.get("M6_SCALEOUT", "0")))
+M6_SCALEOUT_FRAC = float(os.environ.get("M6_SCALEOUT_FRAC", "0.5"))   # trail'de kapatılan oran (kalan = runner)
+M6_RUNNER_MULT   = float(os.environ.get("M6_RUNNER_MULT", "1.8"))     # runner trail çarpanı (ilk trail × bu = daha geniş)
+# YAMA 3 — SWING-STOP: sabit ATR stop yerine son N barın salınım dibi/tepesi ± ATR tamponu
+#          (oynak coinlerde stop kendiliğinden genişler → whipsaw azalır; sakinlerde dar kalır).
+M6_SWINGSTOP     = bool(int(os.environ.get("M6_SWINGSTOP", "0")))
+M6_SWING_LB      = int(os.environ.get("M6_SWING_LB", "10"))           # salınım dibi/tepesi için geriye bakış (bar)
+M6_SWING_BUF     = float(os.environ.get("M6_SWING_BUF", "0.5"))       # salınım seviyesinin ötesine ATR tamponu
+
 M8_STAG_EXIT     = bool(int(os.environ.get("M8_STAG_EXIT", "1")))        # 1=AÇIK (varsayılan) — 6ay +0.09→+0.34%, PF 1.14→1.55, tüm kısa pencereler değişmedi
 M8_STAG_BARS     = int(os.environ.get("M8_STAG_BARS", "24"))             # kaç bar sonra kontrol (24=6 saat@15m); 16-48 hepsi aynı sonuç → insensitive ✅
 M8_STAG_PROGRESS = float(os.environ.get("M8_STAG_PROGRESS", "0.020"))   # bu ilerleme yoksa "durağan" (+%2.0 optimal; 0.5% biraz kötü, 1.0% iyi, 2.0% en iyi)
@@ -797,6 +820,9 @@ class PPos:
     # M5 — Partial Exit (R-multiple kâr kilidi)
     r_value: float = 0.0         # 1R = giriş ile stop arası mesafe (partial exit hesabı için)
     partial_exit_done: bool = False  # +1.5R kısmi çıkış yapıldı mı?
+
+    # M6 YAMA 2 — Scale-out + runner
+    m6_scaled: bool = False      # trail tetiğinde kısmi alınıp runner'a geçildi mi?
 
 
 # ── Dinamik Coin Seçimi ───────────────────────────────────────────────────────
@@ -1974,6 +2000,46 @@ def run_portfolio_backtest(
                     if not _still_strong:
                         hit_stagnation = True  # durağan + zayıf → kapat, sermayeyi serbest bırak
 
+            # ── M6 YAMA 2 — SCALE-OUT + RUNNER ────────────────────────────────
+            # Trail tetiklendiğinde pozisyonu TAM kapatma; bir kısmını al, kalanı daha
+            # GENİŞ trail ile koştur (trend devam ederse 61.5 puanın bir kısmını yakala).
+            # Stop runner için başabaşa çekilir → runner kaybettirmez.
+            if (M6_SCALEOUT and hit_trail and not hit_stop and not pos.m6_scaled
+                    and pos.size > 0 and (pos.cost + pos.pyramid_cost) > MIN_ORDER_SIZE * 1.5):
+                _sc_sz = pos.size * M6_SCALEOUT_FRAC
+                if pos.is_short:
+                    _sc_px   = price * (1 + SLIPPAGE)
+                    _sc_cost = (pos.cost + pos.pyramid_cost) * M6_SCALEOUT_FRAC
+                    _sc_pnl  = (pos.entry_price - _sc_px) * _sc_sz - _sc_px * _sc_sz * COMMISSION
+                    balance += _sc_cost + _sc_pnl
+                else:
+                    _sc_px   = price * (1 - SLIPPAGE)
+                    _sc_proceeds = _sc_px * _sc_sz * (1 - COMMISSION)
+                    _sc_cost = (pos.cost + pos.pyramid_cost) * M6_SCALEOUT_FRAC
+                    _sc_pnl  = _sc_proceeds - _sc_cost
+                    balance += _sc_proceeds
+                # kısmi işlemi kayda geç (muhasebe tutarlı)
+                closed_trades.append(dataclasses.replace(
+                    pos, size=_sc_sz, exit_price=_sc_px, exit_time=ts,
+                    exit_reason="scale_out", pnl=_sc_pnl,
+                    cost=(pos.cost) * M6_SCALEOUT_FRAC,
+                    pyramid_cost=(pos.pyramid_cost) * M6_SCALEOUT_FRAC))
+                daily_pnl_today += _sc_pnl
+                # kalan pozisyonu küçült + runner moduna geç
+                pos.size        *= (1 - M6_SCALEOUT_FRAC)
+                pos.cost        *= (1 - M6_SCALEOUT_FRAC)
+                pos.pyramid_cost*= (1 - M6_SCALEOUT_FRAC)
+                pos.m6_scaled = True
+                pos.trailing_mult *= M6_RUNNER_MULT       # runner trail GENİŞLER
+                # trail'i yeni geniş çarpanla yeniden konumla + stop başabaşa
+                if pos.is_short:
+                    pos.trail_price = price + pos.trailing_mult * pos.entry_atr
+                    pos.stop_price  = min(pos.stop_price, pos.entry_price)
+                else:
+                    pos.trail_price = price - pos.trailing_mult * pos.entry_atr
+                    pos.stop_price  = max(pos.stop_price, pos.entry_price)
+                hit_trail = False   # bu bar TAM kapatma yapma — runner yaşıyor
+
             if hit_stop or hit_trail or hit_tp or hit_time or hit_maxhold or hit_fastexit or hit_profitlock or hit_stagnation:
                 if   hit_stop:        reason = "stop_loss"
                 elif hit_profitlock:  reason = "profit_lock"   # #14: kârdayken 2 mum düşüş → kâr kilitle
@@ -2303,21 +2369,31 @@ def run_portfolio_backtest(
 
                 # 2) Çıkış sonrası bekleme
                 _sl_hours = coin_risk[sym].get("sl_cooldown_hours", 24)
+                # M6 YAMA 1 — RE-ENTRY: stop sonrası KISA pencerede sinyal tekrar ateşlenirse
+                # sl_cooldown'u baypas et (whipsaw telafisi: JUP/TON/DOGE stop sonrası geri döndü).
+                # Güvenlik: coin_consecutive_sl ≤ MAX → sonsuz whipsaw zincirini engelle.
+                _m6_re = False
+                if M6_REENTRY:
+                    _re_sl = coin_last_stoploss.get(sym)
+                    if (_re_sl is not None
+                            and ts - _re_sl <= pd.Timedelta(hours=24.0 * M6_REENTRY_BARS / _bpd)
+                            and coin_consecutive_sl.get(sym, 0) <= M6_REENTRY_MAX):
+                        _m6_re = True
                 if coin_own_bull:
                     # Boğa trendinde: LONG SL sonrası sl_cooldown_hours bekle (yanlış re-entry engeli)
                     # NOT: coin_last_stoploss yalnızca LONG SL'de set edilir → SHORT SL buraya düşmez
                     sym_last_sl_b = coin_last_stoploss.get(sym)
-                    if sym_last_sl_b is not None and ts - sym_last_sl_b < pd.Timedelta(hours=_sl_hours):
+                    if sym_last_sl_b is not None and ts - sym_last_sl_b < pd.Timedelta(hours=_sl_hours) and not _m6_re:
                         continue
                     # M4v11: Normal çıkış sonrası 24h→8h (boğa trendinde daha hızlı re-entry)
                     # Trend devam ederken 24h beklemek fırsatı kaçırıyordu.
                     last_exit_ts = coin_last_exit.get(sym)
-                    if last_exit_ts is not None and ts - last_exit_ts < pd.Timedelta(hours=8):
+                    if last_exit_ts is not None and ts - last_exit_ts < pd.Timedelta(hours=8) and not _m6_re:
                         continue
                 else:
                     # Ayı trendinde LONG SL sonrası bekle (SHORT SL cooldown triggerlamaz → zincir korunur)
                     sym_last_sl = coin_last_stoploss.get(sym)
-                    if sym_last_sl is not None and ts - sym_last_sl < pd.Timedelta(hours=_sl_hours):
+                    if sym_last_sl is not None and ts - sym_last_sl < pd.Timedelta(hours=_sl_hours) and not _m6_re:
                         continue
 
                 # 3) ADX: güçlü trend şart
@@ -2726,6 +2802,21 @@ def run_portfolio_backtest(
                         _struct = float(slice_df["low"].tail(_m7_lb).min())
                         stop_dist = float(np.clip(price - _struct, price * 0.003, price * 0.010))
                         stop_px = price - stop_dist
+                elif M6_SWINGSTOP:
+                    # M6 YAMA 3 — SWING-STOP: stop son N barın salınım dibi/tepesinin
+                    # ötesine + ATR tamponu. Oynak coinde geniş, sakinde dar → whipsaw↓.
+                    # Risk sabit (risk_amt) olduğu için geniş stop = küçük pozisyon (güvenli).
+                    _lb6 = min(M6_SWING_LB, len(slice_df))
+                    if is_short_signal:
+                        _sw6 = float(slice_df["high"].tail(_lb6).max())
+                        stop_dist = (_sw6 - price) + M6_SWING_BUF * atr
+                        stop_dist = float(np.clip(stop_dist, price * _min_stop_pct, price * 0.06))
+                        stop_px = price + stop_dist
+                    else:
+                        _sw6 = float(slice_df["low"].tail(_lb6).min())
+                        stop_dist = (price - _sw6) + M6_SWING_BUF * atr
+                        stop_dist = float(np.clip(stop_dist, price * _min_stop_pct, price * 0.06))
+                        stop_px = price - stop_dist
                 elif is_short_signal:
                     stop_px   = price + atr_stop * atr   # SHORT stop: yukarıda
                     stop_dist = max(stop_px - price, price * _min_stop_pct)
@@ -2865,7 +2956,7 @@ def run_portfolio_backtest(
                         entry_price=fill_price,
                         stop_price=(
                             ((fill_price + stop_dist) if is_short_signal else (fill_price - stop_dist))
-                            if _is_m7 else
+                            if (_is_m7 or M6_SWINGSTOP) else
                             ((fill_price + atr_stop * atr) if is_short_signal else (fill_price - atr_stop * atr))
                         ),
                         trail_price=trail_px,
